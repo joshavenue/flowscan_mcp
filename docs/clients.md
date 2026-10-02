@@ -9,7 +9,7 @@ The server speaks two transports:
 
 Protocol-level checks (list tools, call tools, get the `flowscan_guide` prompt, read a resource, over stdio and HTTP) with the MCP Inspector CLI, the Python MCP SDK, the OpenAI Agents SDK, langchain-mcp-adapters and the Vercel AI SDK are in [scripts/clients/RESULTS.md](../scripts/clients/RESULTS.md) (`npm run clients`). The IDE and chat clients below were not run; their sections follow the vendor docs.
 
-Environment variables (for example `FLOWSCAN_HYPERLIQUID_DIRECT=1` for the 58-tool [direct mode](../README.md#two-modes)) go in the client's `env` block for stdio. Over HTTP they are set on the server process instead.
+Environment variables (for example `FLOWSCAN_HYPERLIQUID_DIRECT=1` for the 58-tool [direct mode](reference.md#two-modes)) go in the client's `env` block for stdio. Over HTTP they are set on the server process instead.
 
 Contents: [Support table](#support-table) · [Running over HTTP](#running-over-http) · [Guidance for non-Claude agents](#guidance-for-non-claude-agents) · [Anthropic](#anthropic-claude-desktop-and-claude-code) · [OpenAI](#openai) · [Cursor](#cursor) · [VS Code](#vs-code-github-copilot) · [Devin Desktop (Windsurf)](#devin-desktop-formerly-windsurf) · [Cline](#cline) · [Roo Code](#roo-code) · [Continue](#continue) · [Zed](#zed) · [JetBrains](#jetbrains-ai-assistant) · [Google](#google) · [xAI Grok](#xai-grok) · [Nous Research Hermes](#nous-research-hermes) · [Frameworks](#agent-frameworks) · [Unverified points](#what-could-not-be-verified)
 
@@ -137,7 +137,7 @@ Strict mode registers 44 tools, direct mode 58. For a client that caps the numbe
 
 ## Anthropic: Claude Desktop and Claude Code
 
-Covered in the [README](../README.md#client-configuration). Over HTTP, Claude Code takes:
+Covered in the [README](../README.md#quick-start); all options are in the [reference](reference.md#client-configuration). Over HTTP, Claude Code takes:
 
 ```sh
 claude mcp add --transport http flowscan http://127.0.0.1:8787/mcp
