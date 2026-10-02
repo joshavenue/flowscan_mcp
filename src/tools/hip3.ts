@@ -2,7 +2,8 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { get, LONG_TTL_MS } from "../client.js";
 import { defineTool } from "../register.js";
-import { envelope, matches, page, pick, result, shapeInput } from "../shape.js";
+import { envelope, matches, page, pick, result, shapeInput, todayUtc } from "../shape.js";
+import { dexAliasTable, findDex, KNOWN_DEX_HELP } from "../dex.js";
 
 type Rec = Record<string, unknown>;
 
@@ -10,15 +11,35 @@ const snapshot = () => get("/api/dex-stats/snapshot", {}, { ttlMs: LONG_TTL_MS }
 const perDex = () => get("/api/dex-stats/per-dex", {}, { ttlMs: LONG_TTL_MS }) as Promise<Rec>;
 const buildersStats = () => get("/api/dex-stats/builders", {}, { ttlMs: LONG_TTL_MS }) as Promise<Rec>;
 
+/** Map an on-chain prefix ('mkts') or display name ('km') to the dex-stats display name ('KM'). */
+function dexName(input: string | undefined): string | undefined {
+  if (!input) return input;
+  return findDex(input)?.name ?? input;
+}
+
+/** Keep the last n items of every array, one level of nesting deep ({oi: {XYZ: [...]}}). */
+function trimNested(obj: Rec, n: number): Rec {
+  return Object.fromEntries(
+    Object.entries(obj).map(([k, v]) => [
+      k,
+      Array.isArray(v) ? v.slice(-n) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Rec).map(([d, a]) => [d, Array.isArray(a) ? a.slice(-n) : a])) : v,
+    ]),
+  );
+}
+
+const partialNote = (dates: unknown[]): Rec =>
+  dates.at(-1) === todayUtc() ? { lastDayPartial: true, partialNote: `The last date (${todayUtc()}) is the current UTC day and still accumulating.` } : { lastDayPartial: false };
+
 /** Convert {dates:[], series:{DEX:[...]}} into recent rows. */
 function tailSeries(block: Rec, days: number, dexFilter?: string): Rec {
   const dates = ((block.dates as string[]) ?? []).slice(-days);
   const series: Rec = {};
+  const want = dexFilter ? String(dexName(dexFilter)).toLowerCase() : undefined;
   for (const [dex, arr] of Object.entries((block.series as Rec) ?? {})) {
-    if (dexFilter && !matches(dex, dexFilter)) continue;
+    if (want && dex.toLowerCase() !== want && !dex.toLowerCase().startsWith(`${want}:`) && !matches(dex, dexFilter)) continue;
     series[dex] = (arr as unknown[]).slice(-days);
   }
-  return { dates, series };
+  return { dates, ...partialNote(dates), series };
 }
 
 /**
@@ -46,7 +67,7 @@ export function registerHip3Tools(server: McpServer): void {
     {
       title: "HIP-3 perp DEXs overview & market share",
       description:
-        "The /hip-3 page headline: totals across all HIP-3 builder-deployed perp DEXs (volume all-time/30d/90d, trades, traders, new users, open interest), per-DEX market share (XYZ, FLX, Hyena, KM, VNTL, Dreamcash, Paragon, Entropy...), DEX list with collateral token, collateral market share, and the builder-routed share of HIP-3 volume (per-DEX top 3 builders; full list via flowscan_hip3_builders). Source: flowscan.xyz /api/dex-stats/snapshot.",
+        "The /hip-3 headline: totals across HIP-3 perp DEXs (volume all-time/30d/90d, trades, traders, new users, OI), per-DEX and per-collateral market share, DEX list with collateral, builder-routed share of volume (top 3 builders per DEX), and dexAliases mapping display names to on-chain prefixes (KM=mkts, Paragon=para, Entropy=io, Hyena=hyna, Dreamcash=cash, ...). OI is two-sided (long + short notional). Prefer this for DEX-level totals and market share.",
       inputSchema: { fields: shapeInput.fields },
     },
     async (args) => {
@@ -61,7 +82,8 @@ export function registerHip3Tools(server: McpServer): void {
         collateral_market_share: d.collateral_market_share,
         builder_routed: { totals: b.totals, per_dex_summary: summarizePerDex(b.per_dex_summary, 3) },
       };
-      return result(envelope("/api/dex-stats/snapshot", pick(out, args.fields)));
+      // dexAliases sits outside `data` so it survives `fields` filtering.
+      return result(envelope("/api/dex-stats/snapshot", pick(out, args.fields), { dexAliases: dexAliasTable() }));
     },
   );
 
@@ -71,10 +93,10 @@ export function registerHip3Tools(server: McpServer): void {
     {
       title: "HIP-3 daily time series (volume, trades, traders, new users, OI)",
       description:
-        "HIP-3 page charts: a daily series per DEX. metric: volume, trades, traders, new_users, oi, oi_by_market (top markets), collateral_traders, collateral_oi. Returns the last N days (default 30). Source: flowscan.xyz /api/dex-stats/snapshot.",
+        "HIP-3 page charts: a daily series per DEX. metric: volume, trades, traders, new_users, oi, oi_by_market (top markets), collateral_traders, collateral_oi. Returns the last N days (default 30); lastDayPartial flags when the last date is the current, still-accumulating UTC day. `dex` takes a display name or on-chain prefix.",
       inputSchema: {
         metric: z.enum(["volume", "trades", "traders", "new_users", "oi", "oi_by_market", "collateral_traders", "collateral_oi"]).optional().describe("Default volume."),
-        dex: z.string().optional().describe("Only this DEX/series name (substring)."),
+        dex: z.string().optional().describe("Only this DEX (display name like 'XYZ'/'KM' or on-chain prefix like 'mkts')."),
         days: z.number().int().min(1).max(400).optional().describe("Default 30."),
         fields: shapeInput.fields,
       },
@@ -96,7 +118,7 @@ export function registerHip3Tools(server: McpServer): void {
     {
       title: "HIP-3 markets list & cross-DEX market comparison",
       description:
-        "HIP-3 page market tables. Without `symbol`: all HIP-3 markets (dex, symbol, canonical underlying, asset class) filterable by dex/assetClass/search, plus asset-class groupings. With `symbol` (canonical, e.g. 'TSLA', 'GOLD'): which DEXs list it and, per DEX, OI, daily active users, volume, spread, slippage at 1k-1m notional, plus daily OI/DAU history. Source: flowscan.xyz /api/dex-stats/snapshot.",
+        "HIP-3 market tables. Without `symbol`: all HIP-3 markets (dex, symbol, canonical, asset class) filterable by dex/assetClass/search. With `symbol` ('TSLA', 'GOLD'): per listing DEX the OI, DAU, volume, spread, slippage (1k-1m), plus OI/DAU history trimmed to `days`. Prefer this to compare one underlying across HIP-3 DEXs; live positioning is in flowscan_perp_markets ('xyz:TSLA'), Binance in flowscan_hip3_binance_comparison.",
       inputSchema: {
         symbol: z.string().optional().describe("Canonical underlying symbol for a cross-DEX comparison."),
         dex: z.string().optional(),
@@ -116,12 +138,13 @@ export function registerHip3Tools(server: McpServer): void {
         if (comp?.history) {
           const h = comp.history as Rec;
           const n = args.days ?? 30;
-          comp.history = Object.fromEntries(Object.entries(h).map(([k, v]) => [k, Array.isArray(v) ? v.slice(-n) : v]));
+          comp.history = trimNested(h, n);
         }
         const mappings = ((markets.canonical_mappings as Rec) ?? {})[keyName ?? args.symbol] ?? null;
         return result(envelope("/api/dex-stats/snapshot", pick({ symbol: keyName ?? args.symbol, listedAs: mappings, comparison: comp }, args.fields)));
       }
-      const all = ((markets.all as Rec[]) ?? []).filter((m) => matches(m.dex, args.dex) && (!args.assetClass || m.asset_class === args.assetClass) && (matches(m.symbol, args.search) || matches(m.canonical, args.search)));
+      const wantDex = dexName(args.dex);
+      const all = ((markets.all as Rec[]) ?? []).filter((m) => (!wantDex || String(m.dex).toLowerCase() === wantDex.toLowerCase()) && (!args.assetClass || m.asset_class === args.assetClass) && (matches(m.symbol, args.search) || matches(m.canonical, args.search)));
       const { items, paging } = page(all, args, 100);
       const byClass = Object.fromEntries(Object.entries((markets.by_asset_class as Rec) ?? {}).map(([k, v]) => [k, (v as unknown[]).length]));
       return result(envelope("/api/dex-stats/snapshot", pick({ marketsByAssetClassCount: byClass, markets: items }, args.fields), { paging }));
@@ -134,9 +157,9 @@ export function registerHip3Tools(server: McpServer): void {
     {
       title: "One HIP-3 DEX: totals, markets, daily totals",
       description:
-        "HIP-3 page per-DEX tab (e.g. XYZ, FLX, Hyena, KM, VNTL, Dreamcash, Paragon, Entropy): collateral token, total volume/trades/traders/OI, every market with volume/traders/OI (sorted by volume), and daily totals for the last N days. Source: flowscan.xyz /api/dex-stats/per-dex.",
+        "HIP-3 per-DEX tab: collateral, total volume/trades/traders/OI, every market with all-time volume, traders and current two-sided OI (sorted by volume), and daily totals for the last N days (lastDayPartial flags today). `dex`: display name or prefix ('mkts' = KM). Prefer this for one DEX's market list.",
       inputSchema: {
-        dex: z.string().describe("DEX name as in flowscan_hip3_overview market_share keys (case-insensitive)."),
+        dex: z.string().describe("DEX display name ('XYZ', 'KM', 'Paragon', ...) or on-chain prefix ('xyz', 'mkts', 'para'), case-insensitive."),
         days: z.number().int().min(1).max(400).optional().describe("Daily totals lookback (default 30)."),
         includeMarketDaily: z.boolean().optional().describe("Include each market's own daily series (large; default false)."),
         search: z.string().optional().describe("Filter markets by symbol substring."),
@@ -145,8 +168,9 @@ export function registerHip3Tools(server: McpServer): void {
     },
     async (args) => {
       const all = await perDex();
-      const key = Object.keys(all).find((k) => k.toLowerCase() === args.dex.toLowerCase());
-      if (!key) return result(envelope("/api/dex-stats/per-dex", { error: `Unknown DEX '${args.dex}'`, available: Object.keys(all) }));
+      const want = String(dexName(args.dex)).toLowerCase();
+      const key = Object.keys(all).find((k) => k.toLowerCase() === want);
+      if (!key) throw new Error(`Unknown DEX '${args.dex}'. Known: ${KNOWN_DEX_HELP}.`);
       const dex = all[key] as Rec;
       const n = args.days ?? 30;
       let markets = ((dex.markets as Rec[]) ?? []).filter((m) => matches(m.symbol, args.search) || matches(m.canonical, args.search));
@@ -154,7 +178,7 @@ export function registerHip3Tools(server: McpServer): void {
       if (!args.includeMarketDaily) markets = markets.map(({ daily: _d, ...rest }) => rest);
       const { items, paging } = page(markets, args, 50);
       const dt = (dex.daily_totals as Rec) ?? {};
-      const daily_totals = Object.fromEntries(Object.entries(dt).map(([k, v]) => [k, Array.isArray(v) ? v.slice(-n) : v]));
+      const daily_totals = { ...trimNested(dt, n), ...partialNote(((dt.dates as string[]) ?? []).slice(-n)) };
       return result(envelope("/api/dex-stats/per-dex", pick({ dex: key, collateral: dex.collateral, total: dex.total, markets: items, daily_totals }, args.fields), { paging }));
     },
   );
@@ -165,7 +189,7 @@ export function registerHip3Tools(server: McpServer): void {
     {
       title: "Builder-routed volume on HIP-3 DEXs",
       description:
-        "HIP-3 page 'Builders' section: share of HIP-3 volume routed through builder codes (totals for all-time/30d/90d), per-DEX builder volume with the top builders on each DEX, and a leaderboard of 800+ builders (address, name, total/30d/90d volume, share of builder volume and of DEX volume). Pass `dex` to rank builders by their volume on one DEX. Source: flowscan.xyz /api/dex-stats/builders.",
+        "HIP-3 'Builders' section: share of HIP-3 volume routed via builder codes (all-time/30d/90d), per-DEX builder volume with top builders, and 800+ builders ranked by HIP-3 volume only (address, name, total/30d/90d volume, shares). `dex` ranks by one DEX. For revenue/users across Hyperliquid use flowscan_builders_leaderboard.",
       inputSchema: {
         search: z.string().optional().describe("Filter builders by name/address substring."),
         window: z.enum(["total", "30d", "90d"]).optional().describe("Ranking window (default total = all-time)."),
@@ -177,7 +201,7 @@ export function registerHip3Tools(server: McpServer): void {
     async (args) => {
       const d = await buildersStats();
       const w = args.window ?? "total";
-      const dexKey = args.dex ? Object.keys((d.per_dex_summary as Rec) ?? {}).find((k) => k.toLowerCase() === args.dex!.toLowerCase()) ?? args.dex : undefined;
+      const dexKey = args.dex ? Object.keys((d.per_dex_summary as Rec) ?? {}).find((k) => k.toLowerCase() === String(dexName(args.dex)).toLowerCase()) ?? args.dex : undefined;
       const score = (b: Rec): number => {
         if (!dexKey) return Number(b[w] ?? 0) || 0;
         return Number(((b.per_dex as Rec)?.[dexKey] as Rec | undefined)?.[w] ?? 0) || 0;
@@ -206,7 +230,7 @@ export function registerHip3Tools(server: McpServer): void {
     {
       title: "HIP-3 RWA markets vs Binance futures (OI & volume)",
       description:
-        "HIP-3 page Binance comparison: ~240 real-world-asset symbols (stocks, HK/KR/CN equities, commodities, indices, FX, pre-market) with the matching Binance USDT-M futures symbol, Binance open interest (USD), 24h volume (USD) and last price. With `symbol`: that symbol's Binance row, its daily Binance OI/volume history, and the HIP-3 side for the same canonical symbol (per-DEX OI, DAU, volume, spread, slippage) for a side-by-side view. Source: flowscan.xyz /api/binance-rwa/comparison (+ /api/dex-stats/snapshot for the HIP-3 side).",
+        "HIP-3 page Binance comparison: ~240 real-world-asset symbols (equities incl. HK/KR/CN, commodities, indices, FX, pre-market) with Binance USDT-M symbol, open interest (USD), 24h volume (USD) and last price. With `symbol`: Binance row, daily Binance OI/volume history and the HIP-3 side per DEX (OI, DAU, volume, spread, slippage). Prefer this when comparing HIP-3 with Binance.",
       inputSchema: {
         symbol: z.string().optional().describe("Canonical symbol, e.g. 'GOLD', 'TSLA', 'NVDA'. Returns one symbol with history and the HIP-3 side."),
         underlyingType: z.string().optional().describe("Exact type filter: EQUITY, HK_EQUITY, KR_EQUITY, CN_EQUITY, COMMODITY, INDEX, FX, PREMARKET."),
@@ -222,7 +246,7 @@ export function registerHip3Tools(server: McpServer): void {
         const key = Object.keys(symbols).find((k) => k.toLowerCase() === args.symbol!.toLowerCase());
         const hist = key ? (((d.history as Rec) ?? {})[key] as Rec | undefined) : undefined;
         const n = args.days ?? 30;
-        const history = hist ? Object.fromEntries(Object.entries(hist).map(([k, v]) => [k, Array.isArray(v) ? v.slice(-n) : v])) : null;
+        const history = hist ? trimNested(hist, n) : null;
         const snap = await snapshot();
         const comps = (snap.market_comparisons as Rec) ?? {};
         const compKey = Object.keys(comps).find((k) => k.toLowerCase() === (key ?? args.symbol!).toLowerCase());

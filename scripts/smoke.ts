@@ -56,6 +56,15 @@ const cases: Case[] = [
   { tool: "flowscan_peers", args: {}, check: (d) => assert(d.data.meta.nodeCount > 0 && d.data.sentries.length > 0, "no peers") },
   { tool: "flowscan_peers", label: "nodes JP", args: { section: "nodes", country: "JP", state: "full", limit: 20 }, check: (d) => assert(d.data.nodes.length > 0, "no JP full nodes") },
   { tool: "flowscan_peers", label: "edges", args: { section: "edges", limit: 50 }, check: (d) => assert(d.data.edges.length === 50, "edges") },
+  { tool: "flowscan_peers", label: "nodes US exact", args: { section: "nodes", country: "US", limit: 200 }, check: (d) => assert(d.data.nodes.every((n: Json) => n.geo?.cc === "US"), "country filter not exact") },
+  {
+    tool: "flowscan_peers",
+    label: "forced structured truncation",
+    args: { section: "all", limit: 1000 },
+    allowTruncate: true,
+    check: (d) => assert(Array.isArray(d._truncated) && d._truncated.length > 0 && /TRUNCATED/.test(d._truncatedNote), "expected structured truncation metadata"),
+  },
+  { tool: "flowscan_peers", label: "all", args: { section: "all" }, check: (d) => assert(d.nodesPaging && d.data.nodes.length <= 50, "all not paged") },
   { tool: "flowscan_staking_overview", args: { limit: 10 }, check: (d) => assert(d.data.validators.length === 10 && Number(d.data.total_staked) > 0, "validators") },
   {
     tool: "flowscan_validator_stakers",
@@ -66,12 +75,30 @@ const cases: Case[] = [
       assert(d.paging.total > 100, "expected thousands of stakers");
     },
   },
-  { tool: "flowscan_staking_events", args: { validator: VALIDATOR, limit: 20 }, check: (d) => assert(d.data.length === 20, "events") },
+  { tool: "flowscan_staking_events", args: { validator: VALIDATOR, limit: 20 }, check: (d) => assert(d.data.length === 20 && d.data[0].timeIso, "events") },
+  { tool: "flowscan_staking_events", label: "by name", args: { validator: "Hyper Foundation 2", limit: 3 }, check: (d) => assert(d.validator === VALIDATOR, "name not resolved") },
+  { tool: "flowscan_validator_stakers", label: "by name", args: { validator: "hyper foundation 2", limit: 3 }, check: (d) => assert(d.data.address === VALIDATOR, "name not resolved") },
+  {
+    tool: "flowscan_staking_overview",
+    label: "cheapest active",
+    args: { sortBy: "commission_bps", order: "asc", excludeJailed: true, limit: 5 },
+    check: (d) => assert(d.data.validators.every((v: Json) => !v.is_jailed && !("description" in v)) && d.data.validators[0].commission_bps <= d.data.validators[4].commission_bps, "asc/jailed"),
+  },
 
   // revenue
-  { tool: "flowscan_revenue_hypercore_fees", args: { days: 14 }, check: (d) => assert(d.data.length === 14 && d.data[0].nativeHypercoreFee, "core fees") },
+  { tool: "flowscan_revenue_hypercore_fees", args: { days: 14 }, check: (d) => assert(d.data.length === 14 && d.data[0].nativeHypercoreFee && d.data.at(-1).partial === true && d.rangeTotals.totalHypercoreFeeUsdc > 0, "core fees") },
   { tool: "flowscan_revenue_hypercore_fees", label: "range", args: { startTime: Date.now() - 6 * DAY, endTime: Date.now() - 2 * DAY }, check: (d) => assert(d.data.length >= 3, "range") },
-  { tool: "flowscan_revenue_deployer_fees", args: { days: 7, dex: "xyz" }, check: (d) => assert(d.data.every((r: Json) => r.byDex.every((x: Json) => x.dex === "xyz")), "dex filter") },
+  {
+    tool: "flowscan_revenue_deployer_fees",
+    args: { days: 7, dex: "xyz" },
+    check: (d) => assert(d.data.every((r: Json) => r.byDex.every((x: Json) => x.dex === "xyz") && "allDexTotalFee" in r && !("totalFee" in r)) && d.rangeTotals.totalFeeUsdc > 0, "dex filter"),
+  },
+  {
+    tool: "flowscan_revenue_deployer_fees",
+    label: "September by date, KM alias",
+    args: { startDate: "2026-09-01", endDate: "2026-09-30", dex: "KM" },
+    check: (d) => assert(d.data.length === 30 && d.data[0].day === "2026-09-01" && d.rangeTotals.dex.includes("mkts"), "date range / alias"),
+  },
   { tool: "flowscan_revenue_priority_gas", args: { days: 7 }, check: (d) => assert(d.data.length === 7 && !d.data[0].writePriority.topUsers, "gas") },
   { tool: "flowscan_revenue_priority_gas", label: "topUsers", args: { days: 2, includeTopUsers: true }, check: (d) => assert(Array.isArray(d.data[0].writePriority.topUsers), "topUsers") },
   {
@@ -88,7 +115,9 @@ const cases: Case[] = [
   // perp snapshot
   { tool: "flowscan_perp_markets", args: { limit: 10 }, check: (d) => assert(d.data.markets.length === 10, "markets") },
   { tool: "flowscan_perp_markets", label: "xyz:", args: { market: "xyz:", sortBy: "totalPositions", limit: 5 }, check: (d) => assert(d.data.markets.every((m: Json) => m.market.startsWith("xyz:")), "xyz filter") },
-  { tool: "flowscan_perp_positions", args: { market: "BTC", limit: 10 }, check: (d) => assert(d.data.positions.length === 10 && d.data.filteredSummary, "BTC positions") },
+  { tool: "flowscan_perp_positions", args: { market: "BTC", limit: 10 }, check: (d) => assert(d.data.positions.length === 10 && d.data.filteredSummary && d.data.snapshotIso, "BTC positions") },
+  { tool: "flowscan_perp_positions", label: "bare TSLA", args: { market: "TSLA", limit: 2 }, check: (d) => assert(d.data.market === "xyz:TSLA", "TSLA not resolved") },
+  { tool: "flowscan_perp_positions", label: "unknown market", args: { market: "NOPE_NOT_A_MARKET" }, expectError: true },
   {
     tool: "flowscan_perp_positions",
     label: "filters",
@@ -109,14 +138,22 @@ const cases: Case[] = [
     },
   },
   { tool: "flowscan_address_summary", label: "dex xyz", args: { address: VAULT, include: ["perpState"], dex: "xyz" }, check: (d) => assert(d.data.perpState.dex === "xyz", "dex") },
-  { tool: "flowscan_address_orders", args: { address: VAULT, limit: 20 }, check: (d) => assert(d.data.length > 0 && d.paging.total > 0, "no open orders") },
+  { tool: "flowscan_address_summary", label: "dex KM alias", args: { address: VAULT, include: ["perpState"], dex: "KM" }, check: (d) => assert(d.data.perpState.dex === "mkts", "alias") },
+  { tool: "flowscan_address_summary", label: "unknown dex", args: { address: VAULT, include: ["perpState"], dex: "nope" }, expectError: true },
+  { tool: "flowscan_address_orders", args: { address: VAULT, limit: 20 }, check: (d) => assert(d.data.length > 0 && d.paging.rowsReturned > 0, "no open orders") },
   { tool: "flowscan_address_orders", label: "openDetailed", args: { address: VAULT, kind: "openDetailed", limit: 10 } },
-  { tool: "flowscan_address_orders", label: "historical", args: { address: VAULT, kind: "historical", limit: 20 }, check: (d) => assert(d.data.length === 20 && d.data[0].status, "historical") },
+  { tool: "flowscan_address_orders", label: "historical", args: { address: VAULT, kind: "historical", limit: 20 }, check: (d) => assert(d.data.length === 20 && d.data[0].status && d.coveredRange, "historical") },
   { tool: "flowscan_address_fills", args: { address: VAULT, limit: 20 }, check: (d) => assert(d.data.length === 20 && d.data[0].time >= d.data[19].time, "fills newest first") },
   { tool: "flowscan_address_fills", label: "range", args: { address: VAULT, startTime: Date.now() - 2 * 3600_000, limit: 10 }, check: (d) => assert("capped" in d, "range meta") },
   { tool: "flowscan_address_ledger", args: { address: VAULT, limit: 20 } },
   { tool: "flowscan_address_ledger", label: "funding", args: { address: VAULT, kind: "funding", startTime: Date.now() - 6 * 3600_000, limit: 20 }, check: (d) => assert(d.data.length > 0, "funding") },
   { tool: "flowscan_address_staking", args: { address: VAULT } },
+  {
+    tool: "flowscan_address_staking",
+    label: "staker",
+    args: { address: "0xa7904a48ffba1c48146d083737a04db369d3b7a0", historyLimit: 2 },
+    check: (d) => assert(d.data.delegations.length > 0 && d.data.delegations.every((x: Json) => typeof x.validatorName === "string") && d.data.totalDelegatedHype > 0, "staking join"),
+  },
   { tool: "flowscan_address_vaults_subaccounts", args: { address: VAULT } },
   { tool: "flowscan_address_extras", args: { address: VAULT, kind: "rateLimit" }, check: (d) => assert(d.data.nRequestsCap, "rateLimit") },
   { tool: "flowscan_address_extras", label: "approvedBuilders", args: { address: VAULT, kind: "approvedBuilders" } },
@@ -138,7 +175,9 @@ const cases: Case[] = [
   { tool: "flowscan_weekend_prices", label: "latest", args: {} },
   { tool: "flowscan_weekend_positions", args: { week: WEEK, limit: 10 }, check: (d) => assert(d.data.markets.length === 10, "positions") },
   { tool: "flowscan_weekend_positions", label: "top changes", args: { market: "xyz:TSLA", includeTopAddressChanges: true }, check: (d) => assert(d.data.markets[0]?.topAddressChanges, "top changes") },
-  { tool: "flowscan_weekend_coin_changes", args: { coin: "xyz:TSLA" }, check: (d) => assert(d.data.changes.length > 0, "coin changes") },
+  { tool: "flowscan_weekend_coin_changes", args: { coin: "xyz:TSLA" }, check: (d) => assert(d.data.changes.length > 0 && d.data.changes[0].fridayCloseIso, "coin changes") },
+  { tool: "flowscan_weekend_coin_changes", label: "bare TSLA", args: { coin: "TSLA" }, check: (d) => assert(d.data.coin === "xyz:TSLA" && d.data.changes.length > 0, "bare symbol") },
+  { tool: "flowscan_weekend_prices", label: "week as date", args: { week: "2026-09-19", market: "TSLA" }, check: (d) => assert(d.data.fridayCloseTs === WEEK, "date week") },
 
   // HIP-4
   {
@@ -161,6 +200,7 @@ const cases: Case[] = [
     args: () => ({ outcomeId: hip4.outcomeId, yesAssetId: hip4.yesAssetId, noAssetId: hip4.noAssetId, days: 3 }),
     check: (d) => assert(Array.isArray(d.data.yesCandles) && d.data.candleColumns, "candles"),
   },
+  { tool: "flowscan_hip4_outcome", label: "outcomeId only", args: () => ({ outcomeId: hip4.outcomeId, days: 1 }), check: (d) => assert(d.data.yesAssetId === `#${hip4.outcomeId}0`, "derived ids") },
   { tool: "flowscan_hip4_labels", args: () => ({ assets: [hip4.yesAssetId, hip4.noAssetId] }), check: (d) => assert(Object.keys(d.data.labels ?? {}).length === 2, "labels") },
 
   // HIP-3
@@ -168,8 +208,14 @@ const cases: Case[] = [
   { tool: "flowscan_hip3_daily", args: { metric: "volume", days: 14 }, check: (d) => assert(d.data.dates.length === 14 && d.data.series.XYZ.length === 14, "daily") },
   { tool: "flowscan_hip3_daily", label: "oi_by_market", args: { metric: "oi_by_market", days: 7 }, check: (d) => assert(Array.isArray(d.data.markets), "oi_by_market") },
   { tool: "flowscan_hip3_markets", args: { dex: "XYZ", assetClass: "Equities", limit: 20 }, check: (d) => assert(d.data.markets.length > 0, "markets") },
-  { tool: "flowscan_hip3_markets", label: "TSLA", args: { symbol: "TSLA", days: 7 }, check: (d) => assert(d.data.comparison?.dexes?.XYZ, "TSLA comparison") },
-  { tool: "flowscan_hip3_dex", args: { dex: "XYZ", days: 7, limit: 10 }, check: (d) => assert(d.data.markets.length === 10 && d.data.total, "dex") },
+  {
+    tool: "flowscan_hip3_markets",
+    label: "TSLA",
+    args: { symbol: "TSLA", days: 7 },
+    check: (d) => assert(d.data.comparison?.dexes?.XYZ && Object.values(d.data.comparison.history.oi).every((a: Json) => a.length === 7), "TSLA comparison"),
+  },
+  { tool: "flowscan_hip3_dex", args: { dex: "XYZ", days: 7, limit: 10 }, check: (d) => assert(d.data.markets.length === 10 && d.data.total && "lastDayPartial" in d.data.daily_totals, "dex") },
+  { tool: "flowscan_hip3_dex", label: "prefix mkts", args: { dex: "mkts", days: 3, limit: 3 }, check: (d) => assert(d.data.dex === "KM", "prefix alias") },
   { tool: "flowscan_hip3_builders", args: { limit: 10 }, check: (d) => assert(d.data.builders.length === 10 && d.data.totals, "builders") },
   { tool: "flowscan_hip3_builders", label: "dex XYZ 30d", args: { dex: "XYZ", window: "30d", limit: 5 }, check: (d) => assert(d.data.builders.length > 0 && d.data.rankedBy === "XYZ.30d", "dex rank") },
   { tool: "flowscan_hip3_binance_comparison", args: { limit: 10 }, check: (d) => assert(d.data.symbols.length === 10, "binance") },
@@ -179,6 +225,12 @@ const cases: Case[] = [
   // builders
   { tool: "flowscan_builders_leaderboard", args: {}, check: (d) => assert(d.data.builders.length > 0, "leaderboard") },
   { tool: "flowscan_builders_leaderboard", label: "volume 30d wallet", args: { metric: "volume", window: "30d", category: "wallet", limit: 5 } },
+  {
+    tool: "flowscan_builders_leaderboard",
+    label: "ARPU minUsers",
+    args: { metric: "avg_revenue_per_user_all_time", minUsers: 100, limit: 3 },
+    check: (d) => assert(d.data.sortedBy === "avg_revenue_per_user_all_time" && d.data.builders.every((b: Json) => b.totalUsers >= 100), "minUsers"),
+  },
   { tool: "flowscan_builders_summary", args: { limit: 10 }, check: (d) => assert(d.data.totals && d.data.builders.length === 10, "summary") },
   { tool: "flowscan_builders_daily_revenue", args: { top: 5 }, check: (d) => assert(Object.keys(d.data.rangeTotals).length === 5, "daily revenue") },
   {
@@ -190,7 +242,8 @@ const cases: Case[] = [
   { tool: "flowscan_builders_user_series", args: { builder: "pvp", days: 14 }, check: (d) => assert(d.data.byBuilder.length >= 1 && d.data.dates.length === 14, "user series") },
   { tool: "flowscan_builder_dashboard", args: { builder: PVP_BUILDER }, check: (d) => assert(d.data.stats && d.data.daily && d.data.volumeByAsset, "dashboard") },
   { tool: "flowscan_builder_dashboard", label: "all window", args: { builder: PVP_BUILDER, window: "all" } },
-  { tool: "flowscan_builder_dashboard", label: "bad address", args: { builder: "pvp" }, expectError: true },
+  { tool: "flowscan_builder_dashboard", label: "by id", args: { builder: "pvp", section: "stats" }, check: (d) => assert(d.resolvedBuilder?.address === PVP_BUILDER, "pvp not resolved") },
+  { tool: "flowscan_builder_dashboard", label: "unknown builder", args: { builder: "zzzz-no-such-builder-qq" }, expectError: true },
   { tool: "flowscan_builder_intelligence_list", args: { limit: 10 }, check: (d) => assert(d.data.builders.length === 10 && d.data.categories, "intel list") },
   { tool: "flowscan_builder_intelligence_detail", args: { builderId: "pvp" }, check: (d) => assert(d.data.key_metrics, "intel detail") },
   {
@@ -244,6 +297,15 @@ const cases: Case[] = [
   },
   {
     tool: "flowscan_builder_revenue",
+    label: "id:fomo",
+    args: { builder: "id:fomo", days: 45 },
+    check: (d) => assert(d.data.builder?.id === "fomo" && d.data.totalRevenueUsd > 0, "id: prefix"),
+  },
+  { tool: "flowscan_builder_revenue", label: "start > end", args: { builder: "pvp", startDate: "2026-09-15", endDate: "2026-09-01" }, expectError: true },
+  { tool: "flowscan_builder_revenue", label: "future", args: { builder: "pvp", startDate: "2099-01-01" }, expectError: true },
+  { tool: "flowscan_builders_daily_revenue", label: "2026-02-30", args: { startDate: "2026-02-30", endDate: "2026-03-02" }, expectError: true },
+  {
+    tool: "flowscan_builder_revenue",
     label: "pvp dates",
     args: { builder: "pvp", startDate: "2026-09-01", endDate: "2026-09-30" },
     check: (d) => assert(d.data.builder.id === "pvp" && d.data.range.days === 30 && d.data.totalRevenueUsd > 0, "pvp revenue"),
@@ -268,12 +330,15 @@ cases.splice(
 );
 
 function parsePayload(text: string): { json: Json | null; truncated: boolean } {
-  const idx = text.indexOf(TRUNC_MARKER);
-  if (idx >= 0) {
-    // Truncated JSON is not parseable; we only check it starts like JSON and carries the marker.
-    return { json: null, truncated: true };
+  try {
+    const json = JSON.parse(text);
+    // Structured truncation keeps valid JSON and lists what was shortened in `_truncated`.
+    return { json, truncated: Array.isArray(json?._truncated) };
+  } catch (err) {
+    // Last-resort string cut: not parseable, but must carry the marker.
+    if (text.includes(TRUNC_MARKER)) return { json: null, truncated: true };
+    throw err;
   }
-  return { json: JSON.parse(text), truncated: false };
 }
 
 async function main(): Promise<void> {
@@ -322,7 +387,9 @@ async function main(): Promise<void> {
           status = c.allowTruncate ? "ok (truncated)" : "FAIL";
           if (!c.allowTruncate) failures.push(`${name}: output truncated at ${text.length} chars; default output should fit`);
           if (!text.trimStart().startsWith("{") && !text.trimStart().startsWith("[")) failures.push(`${name}: truncated output is not JSON-like`);
-        } else if (c.check) {
+          if (json === null) failures.push(`${name}: truncated output is not valid JSON (structured truncation expected)`);
+        }
+        if (json !== null && c.check) {
           const msg = c.check(json);
           if (typeof msg === "string") throw new Error(msg);
         }

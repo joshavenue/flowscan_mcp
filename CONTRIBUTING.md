@@ -15,19 +15,24 @@ All network I/O goes through `get`/`post` in `src/client.ts`. Do not call `fetch
 ## Adding a tool
 
 1. Add it to the matching file in `src/tools/` with `defineTool` (from `src/register.ts`). Accept the standard `fields`/`limit`/`offset` inputs from `src/shape.ts` when the result can be large, and wrap the result with `envelope(route, data)`.
-2. Mention the Flowscan page and the route in the description, as the existing tools do.
+2. Say in the description which Flowscan page the data mirrors and when to prefer this tool. Do not add a "Source: ..." sentence; the route is reported in the `source` field of every result.
 3. Add the tool to its page in `src/coverage.ts`.
 4. Add it to the tools table in `README.md` and, if it answers a common question, to `skills/flowscan/SKILL.md`.
-5. Add a call to the smoke test in `scripts/smoke.ts`.
+5. Add a call to the smoke test in `scripts/smoke.ts` (it fails if any tool is untested), and a scenario in `scripts/qa/scenarios.ts` if the tool answers a typical agent question.
 
 ## Checks
+
+All of these must pass before a change is merged:
 
 ```sh
 npm install
 npm run typecheck
 npm run build
-npm test           # offline unit tests
-npm run smoke      # live: calls www.flowscan.xyz
+npm test                          # offline unit tests (test/)
+npm run smoke                     # live: calls every tool against www.flowscan.xyz using dist/, so build first
+npx tsx scripts/qa/scenarios.ts   # live: agent-style QA scenarios, run from src/
 ```
 
-The smoke test needs network access and depends on the live site, so CI does not run it on every push. To run it in GitHub Actions, open the CI workflow in the Actions tab and use "Run workflow"; that starts the `smoke` job.
+The QA harness is described in `scripts/qa/README.md`. It runs the server from source over stdio, compares answers with the raw Flowscan routes, checks that no host other than www.flowscan.xyz is contacted, that the concurrency limit holds and that errors are not retried. Any MUST failure, or any other host being contacted, makes it exit 1; SHOULD checks are reported as warnings. Use `--only 1,5` to run a subset and `--json out.json` to save results. It is deliberately not an npm script.
+
+The smoke test and the QA scenarios need network access and depend on the live site, so CI does not run them on every push. To run them in GitHub Actions, open the CI workflow in the Actions tab and use "Run workflow"; that starts the `smoke` job, which runs both.

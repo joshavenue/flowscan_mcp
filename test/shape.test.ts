@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compactAddressLists, MAX_RESULT_CHARS, page, pick, tail, toText } from "../src/shape.js";
+import { compactAddressLists, isValidYmd, MAX_RESULT_CHARS, page, pick, tail, toText } from "../src/shape.js";
 
 test("pick keeps top-level keys and dotted paths, drops the rest", () => {
   const v = { a: 1, b: { c: 2, d: 3 }, e: [1, 2] };
@@ -28,6 +28,7 @@ test("toText returns JSON when small and a marked prefix when too big", () => {
   const small = { x: [1, 2, 3] };
   assert.deepEqual(JSON.parse(toText(small)), small);
 
+  // a single giant string cannot be shortened structurally -> last-resort string cut
   const big = { blob: "y".repeat(MAX_RESULT_CHARS + 1000) };
   const text = toText(big);
   assert.ok(text.includes("[TRUNCATED: response was"), "has truncation marker");
@@ -42,4 +43,29 @@ test("compactAddressLists replaces long address arrays only", () => {
   assert.equal(out.cohorts[0].user_addresses.sample.length, 5);
   assert.deepEqual(out.cohorts[0].other, [1, 2, 3]);
   assert.equal(out.few.length, 3);
+});
+
+test("toText shortens the largest arrays and stays valid JSON", () => {
+  const big = { meta: { a: 1 }, rows: Array.from({ length: 5000 }, (_, i) => ({ i, pad: "x".repeat(40) })), small: [1, 2, 3] };
+  const text = toText(big);
+  assert.ok(text.length <= MAX_RESULT_CHARS);
+  const parsed = JSON.parse(text);
+  assert.deepEqual(parsed.meta, { a: 1 });
+  assert.deepEqual(parsed.small, [1, 2, 3]);
+  assert.ok(parsed.rows.length < 5000 && parsed.rows.length > 100);
+  assert.deepEqual(parsed._truncated[0].path, "rows");
+  assert.equal(parsed._truncated[0].originalLength, 5000);
+  assert.equal(parsed._truncated[0].kept, parsed.rows.length);
+  assert.match(parsed._truncatedNote, /TRUNCATED/);
+});
+
+test("toText output is compact JSON", () => {
+  assert.equal(toText({ a: [1, 2], b: { c: "d" } }), '{"a":[1,2],"b":{"c":"d"}}');
+});
+
+test("isValidYmd rejects impossible dates", () => {
+  assert.equal(isValidYmd("2026-02-28"), true);
+  assert.equal(isValidYmd("2026-02-30"), false);
+  assert.equal(isValidYmd("2026-13-45"), false);
+  assert.equal(isValidYmd("Sept 1"), false);
 });

@@ -28,11 +28,11 @@ jobs:
       - name: Unit tests (offline)
         run: npm test
 
-  # Live test against www.flowscan.xyz. It depends on the site and its
-  # undocumented routes, so it only runs when started by hand from the
+  # Live tests against www.flowscan.xyz. They depend on the site and its
+  # undocumented routes, so they only run when started by hand from the
   # Actions tab ("Run workflow").
   smoke:
-    name: Live smoke test against www.flowscan.xyz
+    name: Live smoke test and QA scenarios against www.flowscan.xyz
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -41,5 +41,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm run smoke
+      - run: npm ci  # also builds dist/ via the prepare script
+      - name: Smoke test (every tool, built server)
+        run: npm run smoke
+      - name: QA scenarios (from source)
+        run: npx tsx scripts/qa/scenarios.ts

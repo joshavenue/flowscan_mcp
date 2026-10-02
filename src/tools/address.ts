@@ -2,7 +2,9 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { post } from "../client.js";
 import { defineTool } from "../register.js";
-import { ETH_ADDRESS, envelope, matches, page, pick, result, shapeInput } from "../shape.js";
+import { ETH_ADDRESS, envelope, isoOf, matches, page, pick, result, shapeInput } from "../shape.js";
+import { findDex, KNOWN_DEX_HELP } from "../dex.js";
+import { stakingOverview } from "./validators.js";
 
 type Rec = Record<string, unknown>;
 const ROUTE = "/api/hydromancer/info";
@@ -20,16 +22,34 @@ function newestFirst(rows: Rec[], key: string): Rec[] {
   return [...rows].sort((a, b) => Number(b[key] ?? 0) - Number(a[key] ?? 0));
 }
 
-function rangeMeta(rows: Rec[], key: string): Rec {
+/**
+ * Coverage metadata for capped upstream lists.
+ * mode "range": time-range query (oldest rows first from startTime) -> give a cursor.
+ * mode "recent": most-recent query (newest ~2000 kept upstream) -> older rows need a range query.
+ */
+function rangeMeta(rows: Rec[], key: string, mode: "range" | "recent"): Rec {
   if (rows.length === 0) return { returned: 0, capped: false };
   const times = rows.map((r) => Number(r[key] ?? 0)).filter((t) => t > 0);
   const from = Math.min(...times);
   const to = Math.max(...times);
-  return {
+  const capped = rows.length >= UPSTREAM_ROW_CAP;
+  const meta: Rec = {
     returned: rows.length,
-    capped: rows.length >= UPSTREAM_ROW_CAP,
+    capped,
     coveredRange: { from, to, fromIso: new Date(from).toISOString(), toIso: new Date(to).toISOString() },
   };
+  if (capped && mode === "range") {
+    meta.nextStartTime = to + 1;
+    meta.capNote = `Upstream cap hit: these are the OLDEST ${UPSTREAM_ROW_CAP} rows from startTime, covering only ${new Date(from).toISOString()} .. ${new Date(to).toISOString()}. Call again with startTime=nextStartTime for later rows.`;
+  } else if (capped) {
+    meta.capNote = `Upstream keeps only the most recent ${UPSTREAM_ROW_CAP} rows (covering ${new Date(from).toISOString()} .. ${new Date(to).toISOString()}); older rows need a startTime query.`;
+  }
+  return meta;
+}
+
+/** page() metadata relabelled so a capped upstream count is not mistaken for the window total. */
+function rowPaging(p: { total: number; offset: number; limit: number; hasMore: boolean }, capped: boolean): Rec {
+  return { rowsReturned: p.total, offset: p.offset, limit: p.limit, hasMore: p.hasMore, ...(capped ? { note: "rowsReturned counts rows in this capped upstream response, not all rows in the period" } : {}) };
 }
 
 export function registerAddressTools(server: McpServer): void {
@@ -39,29 +59,45 @@ export function registerAddressTools(server: McpServer): void {
     {
       title: "Address overview (role, PnL summary, perp state, spot balances)",
       description:
-        "The header and overview of Flowscan's /address/{address} page: account role (user/vault/subAccount/agent/missing), lifetime PnL summary (total PnL, win/loss rate, trade count, median hold time, volume, fees, funding, days active, traded pairs), live perp clearinghouse state (account value, total notional, margin used, withdrawable, open positions with size, entry, leverage, liquidation price, unrealized PnL, ROE, cumulative funding) and non-zero spot token balances. Positions are sorted by position value and capped by `positionsLimit`. Perp state covers the main perp DEX unless `dex` names a HIP-3 DEX (e.g. 'xyz'). Source: flowscan.xyz /api/hydromancer/info.",
+        "Overview of an /address page: role (user/vault/subAccount/agent/missing), lifetime PnL summary (PnL, win rate, trades, hold time, volume, fees, funding, days active, tradedPairs as count + first 30), live perp state (account value, notional, margin, withdrawable, positions with size/entry/leverage/liquidation/uPnL/ROE/funding, largest first, capped by positionsLimit) and non-zero spot balances. Perp state is the main DEX unless `dex` names a HIP-3 DEX (prefix or display name; unknown names are rejected).",
       inputSchema: {
         address: ETH_ADDRESS,
         include: z
           .array(z.enum(["role", "pnlSummary", "perpState", "spotBalances"]))
           .optional()
           .describe("Which sections to fetch (default all four)."),
-        dex: z.string().optional().describe("HIP-3 perp DEX name for perpState (lowercase, e.g. 'xyz', 'flx', 'km'). Omit for the main Hyperliquid perp DEX."),
+        dex: z.string().optional().describe(`HIP-3 DEX for perpState (${KNOWN_DEX_HELP}). Omit for the main DEX.`),
         positionsLimit: z.number().int().min(1).max(500).optional().describe("Max open positions returned in perpState (default 50, largest first)."),
+        balancesLimit: z.number().int().min(1).max(500).optional().describe("Max spot balances returned (default 50)."),
         fields: shapeInput.fields,
       },
     },
     async (args) => {
+      let dex: string | undefined;
+      let dexNote: string | undefined;
+      if (args.dex !== undefined && String(args.dex).trim() !== "" && String(args.dex).trim().toLowerCase() !== "main") {
+        const d = findDex(String(args.dex));
+        if (!d) throw new Error(`Unknown HIP-3 dex '${args.dex}'. Known: ${KNOWN_DEX_HELP}. Omit dex for the main perp DEX.`);
+        dex = d.prefix;
+        const q = String(args.dex).trim().toLowerCase();
+        if (q !== d.prefix) dexNote = d.formerPrefixes.includes(q) ? `'${q}' is ${d.name}'s former prefix; queried its current prefix '${d.prefix}'.` : `'${args.dex}' mapped to on-chain prefix '${d.prefix}'.`;
+      }
       const want = new Set(args.include ?? ["role", "pnlSummary", "perpState", "spotBalances"]);
       const [role, pnl, perp, spot] = await Promise.all([
         want.has("role") ? info("userRole", args.address) : null,
         want.has("pnlSummary") ? info("userPnlSummary", args.address) : null,
-        want.has("perpState") ? info("clearinghouseState", args.address, args.dex ? { dex: args.dex } : {}) : null,
+        want.has("perpState") ? info("clearinghouseState", args.address, dex ? { dex } : {}) : null,
         want.has("spotBalances") ? info("spotClearinghouseState", args.address) : null,
       ]);
       const out: Rec = { address: args.address.toLowerCase() };
       if (role) out.role = role;
-      if (pnl) out.pnlSummary = pnl;
+      if (pnl && typeof pnl === "object") {
+        const ps = { ...(pnl as Rec) };
+        const pairs = ps.tradedPairs;
+        const wantsPairs = (args.fields ?? []).some((f: string) => f === "pnlSummary" || f.startsWith("pnlSummary.tradedPairs"));
+        if (Array.isArray(pairs) && pairs.length > 30 && !wantsPairs) ps.tradedPairs = { count: pairs.length, first30: pairs.slice(0, 30), note: "pass fields:['pnlSummary.tradedPairs'] for the full list" };
+        out.pnlSummary = ps;
+      } else if (pnl) out.pnlSummary = pnl;
       if (perp && typeof perp === "object") {
         const st = perp as Rec;
         const positions = ((st.assetPositions as Rec[]) ?? [])
@@ -70,7 +106,8 @@ export function registerAddressTools(server: McpServer): void {
         const lim = args.positionsLimit ?? 50;
         const { assetPositions: _ap, ...rest } = st;
         out.perpState = {
-          dex: args.dex ?? "main",
+          dex: dex ?? "main",
+          ...(dexNote ? { dexNote } : {}),
           ...rest,
           positionCount: positions.length,
           positions: positions.slice(0, lim),
@@ -79,7 +116,10 @@ export function registerAddressTools(server: McpServer): void {
       } else if (perp !== null) out.perpState = perp;
       if (spot && typeof spot === "object") {
         const balances = ((spot as Rec).balances as Rec[]) ?? [];
-        out.spotBalances = balances.filter((b) => Number(b.total ?? 0) !== 0 || Number(b.hold ?? 0) !== 0);
+        const nonZero = balances.filter((b) => Number(b.total ?? 0) !== 0 || Number(b.hold ?? 0) !== 0);
+        const bl = args.balancesLimit ?? 50;
+        out.spotBalances = nonZero.slice(0, bl);
+        if (nonZero.length > bl) out.spotBalancesNote = `showing ${bl} of ${nonZero.length} non-zero balances; raise balancesLimit`;
       } else if (spot !== null) out.spotBalances = spot;
       return result(envelope(ROUTE, pick(out, args.fields)));
     },
@@ -91,7 +131,7 @@ export function registerAddressTools(server: McpServer): void {
     {
       title: "Address open or historical orders",
       description:
-        "Address page 'Open Orders' / 'Order History' tabs. kind='open' (default): every resting order across all DEXs incl. HIP-3 (coin, side B=buy/A=sell, limit price, size, original size, oid, timestamp). kind='openDetailed': open orders on the main DEX with trigger/TP-SL/reduce-only/order-type/TIF details (may be capped by the upstream). kind='historical': recent order history (up to ~2000 orders, newest first) with final status (filled, canceled, rejected...). Source: flowscan.xyz /api/hydromancer/info {type:'openOrders'|'frontendOpenOrders'|'historicalOrders'}.",
+        "Address 'Open Orders' / 'Order History'. kind='open' (default): all resting orders on every DEX (coin, side B/A, limit price, size, oid, time). 'openDetailed': main-DEX orders with trigger/TP-SL/reduce-only/type/TIF (upstream max 100, `capped` then). 'historical': the newest ~2000 orders with final status; coveredRange shows their time span (seconds for busy accounts).",
       inputSchema: {
         address: ETH_ADDRESS,
         kind: z.enum(["open", "openDetailed", "historical"]).optional().describe("Default 'open'."),
@@ -107,9 +147,15 @@ export function registerAddressTools(server: McpServer): void {
         : kind === "openDetailed"
           ? info("frontendOpenOrders", args.address)
           : info("historicalOrders", args.address))) as Rec[];
-      const list = (Array.isArray(raw) ? raw : []).filter((o) => matches((o.order as Rec)?.coin ?? o.coin, args.coin));
+      const all = Array.isArray(raw) ? raw : [];
+      let meta: Rec = { returned: all.length };
+      if (kind === "historical") meta = rangeMeta(all, "statusTimestamp", "recent");
+      else if (kind === "openDetailed" && all.length === 100) {
+        meta = { returned: 100, capped: true, capNote: "frontendOpenOrders returns at most 100 orders (main DEX only); use kind='open' for the complete list across all DEXs." };
+      }
+      const list = all.filter((o) => matches((o.order as Rec)?.coin ?? o.coin, args.coin));
       const { items, paging } = page(list, args, kind === "historical" ? 50 : 100);
-      return result(envelope(ROUTE, items.map((o) => pick(o, args.fields)), { paging, kind }));
+      return result(envelope(ROUTE, items.map((o) => pick(o, args.fields)), { paging: rowPaging(paging, Boolean(meta.capped)), kind, ...meta }));
     },
   );
 
@@ -119,7 +165,7 @@ export function registerAddressTools(server: McpServer): void {
     {
       title: "Address trade fills",
       description:
-        "Address page 'Trades' tab: executed fills, newest first (coin, price, size, side B/A, direction such as 'Open Long'/'Close Short', start position, closed PnL, fee + fee token, tx hash, order id, time ms). Without startTime: the most recent fills (upstream keeps ~2000). With startTime[/endTime]: fills in that window; upstream returns at most 2000 fills counted from startTime, so check `capped`/`coveredRange` and move startTime forward to continue. Source: flowscan.xyz /api/hydromancer/info {type:'userFills'|'userFillsByTime'}.",
+        "Address 'Trades' tab: fills, newest first (coin, price, size, side, direction like 'Open Long', start position, closed PnL, fee, tx hash, oid, time). Without startTime: the most recent ~2000 fills. With startTime[/endTime]: upstream returns the OLDEST 2000 fills from startTime; if `capped`, continue with startTime=nextStartTime.",
       inputSchema: {
         address: ETH_ADDRESS,
         startTime: z.number().int().optional().describe("Unix ms. If set, uses the time-range query."),
@@ -136,10 +182,10 @@ export function registerAddressTools(server: McpServer): void {
         ? info("userFillsByTime", args.address, { startTime: args.startTime, ...(args.endTime !== undefined ? { endTime: args.endTime } : {}), aggregateByTime: agg })
         : info("userFills", args.address, { aggregateByTime: agg }));
       const all = Array.isArray(raw) ? (raw as Rec[]) : [];
-      const meta = rangeMeta(all, "time");
+      const meta = rangeMeta(all, "time", ranged ? "range" : "recent");
       const list = newestFirst(all, "time").filter((f) => matches(f.coin, args.coin));
       const { items, paging } = page(list, args, 100);
-      return result(envelope(ROUTE, items.map((f) => pick(f, args.fields)), { paging, ...meta }));
+      return result(envelope(ROUTE, items.map((f) => pick(f, args.fields)), { paging: rowPaging(paging, Boolean(meta.capped)), ...meta }));
     },
   );
 
@@ -149,7 +195,7 @@ export function registerAddressTools(server: McpServer): void {
     {
       title: "Address funding payments or ledger updates",
       description:
-        "Address page 'Funding' and 'Transfers/Ledger' tabs, newest first. kind='ledger' (default): non-funding ledger updates (deposits, withdrawals, internal/spot/sub-account transfers, vault deposits/withdrawals, liquidations...) since startTime (default 30 days ago). kind='funding': hourly funding payments per position {coin, usdc, szi, fundingRate} since startTime (default 7 days ago). Upstream returns at most 2000 rows counted from startTime: check `capped`/`coveredRange` and move startTime forward to continue. Source: flowscan.xyz /api/hydromancer/info {type:'userFunding'|'userNonFundingLedgerUpdates'}.",
+        "Address 'Funding' / 'Ledger' tabs, newest first. kind='ledger' (default): deposits, withdrawals, transfers, vault flows, liquidations since startTime (default 30 days ago). kind='funding': hourly funding payments {coin, usdc, szi, fundingRate} (default last 7 days). Upstream returns the OLDEST 2000 rows from startTime; if `capped`, continue with startTime=nextStartTime.",
       inputSchema: {
         address: ETH_ADDRESS,
         kind: z.enum(["funding", "ledger"]).optional().describe("Default 'ledger'."),
@@ -166,14 +212,14 @@ export function registerAddressTools(server: McpServer): void {
       if (args.endTime !== undefined) extra.endTime = args.endTime;
       const raw = await info(kind === "funding" ? "userFunding" : "userNonFundingLedgerUpdates", args.address, extra);
       const all = Array.isArray(raw) ? (raw as Rec[]) : [];
-      const meta = rangeMeta(all, "time");
+      const meta = rangeMeta(all, "time", "range");
       const list = newestFirst(all, "time").filter((r) => {
         if (!args.coin) return true;
         const d = (r.delta as Rec) ?? {};
         return matches(d.coin ?? d.token, args.coin);
       });
       const { items, paging } = page(list, args, 100);
-      return result(envelope(ROUTE, items.map((r) => pick(r, args.fields)), { paging, kind, startTime, ...meta }));
+      return result(envelope(ROUTE, items.map((r) => pick(r, args.fields)), { paging: rowPaging(paging, Boolean(meta.capped)), kind, startTime, ...meta }));
     },
   );
 
@@ -183,7 +229,7 @@ export function registerAddressTools(server: McpServer): void {
     {
       title: "Address staking delegations & history",
       description:
-        "Address page 'Staking' section: current HYPE delegations per validator and the delegation/undelegation history. Source: flowscan.xyz /api/hydromancer/info {type:'delegations'|'delegatorHistory'}.",
+        "Address page 'Staking' section: totalDelegatedHype, current delegations per validator (validator address and name, commission_bps, is_jailed, amountHype, lock-up end) and the staking history (delegate/undelegate, deposits/withdrawals to staking, newest first).",
       inputSchema: {
         address: ETH_ADDRESS,
         historyLimit: z.number().int().min(1).max(500).optional().describe("Max history rows (default 50)."),
@@ -191,8 +237,29 @@ export function registerAddressTools(server: McpServer): void {
       },
     },
     async (args) => {
-      const [delegations, history] = await Promise.all([info("delegations", args.address), info("delegatorHistory", args.address, { limit: args.historyLimit ?? 50 })]);
-      return result(envelope(ROUTE, pick({ delegations, history }, args.fields)));
+      const [delegations, history, overview] = await Promise.all([
+        info("delegations", args.address),
+        info("delegatorHistory", args.address, { limit: args.historyLimit ?? 50 }),
+        stakingOverview().catch(() => null),
+      ]);
+      const byAddr = new Map<string, Rec>((((overview?.validators as Rec[]) ?? [])).map((v) => [String(v.address).toLowerCase(), v]));
+      const dl = Array.isArray(delegations) ? (delegations as Rec[]) : [];
+      const enriched = dl
+        .map((d) => {
+          const v = byAddr.get(String(d.validator).toLowerCase());
+          return {
+            validator: d.validator,
+            validatorName: v ? String(v.name) : null,
+            commission_bps: v?.commission_bps ?? null,
+            is_jailed: v?.is_jailed ?? null,
+            amountHype: d.amount,
+            lockedUntil: d.lockedUntilTimestamp,
+            lockedUntilIso: isoOf(d.lockedUntilTimestamp),
+          };
+        })
+        .sort((a, b) => Number(b.amountHype ?? 0) - Number(a.amountHype ?? 0));
+      const totalDelegatedHype = dl.reduce((a, d) => a + (Number(d.amount) || 0), 0);
+      return result(envelope(ROUTE, pick({ totalDelegatedHype, validatorCount: enriched.length, delegations: enriched, history }, args.fields)));
     },
   );
 
@@ -202,7 +269,7 @@ export function registerAddressTools(server: McpServer): void {
     {
       title: "Address vault equities & sub-accounts",
       description:
-        "Address page 'Vaults' and 'Sub-accounts' sections: equity the address holds in each vault (vault address, equity, lock-up), and its sub-accounts (name, sub-account address, account value, notional, withdrawable, open position count, non-zero spot balances). Use flowscan_address_summary on a sub-account address for its full state. Source: flowscan.xyz /api/hydromancer/info {type:'userVaultEquities'|'subAccounts'}.",
+        "Address 'Vaults' and 'Sub-accounts': equity held in each vault (vault, equity, lock-up) and sub-accounts (name, address, account value, notional, withdrawable, open positions, non-zero spot balances).",
       inputSchema: { address: ETH_ADDRESS, fields: shapeInput.fields },
     },
     async (args) => {
@@ -235,7 +302,7 @@ export function registerAddressTools(server: McpServer): void {
     {
       title: "Address extras: approved builders, borrow/lend, rate limit, TWAP fills",
       description:
-        "Smaller address-page widgets. kind: 'approvedBuilders' (builder codes the user approved with max fee), 'borrowLend' (HyperCore native borrow/lend state per token, health and health factor), 'rateLimit' (API request allowance vs cumulative volume), 'twapSliceFills' (fills generated by the user's TWAP orders). Source: flowscan.xyz /api/hydromancer/info.",
+        "Smaller address-page widgets. kind: 'approvedBuilders' (builder codes the user approved with max fee), 'borrowLend' (HyperCore native borrow/lend state per token, health and health factor), 'rateLimit' (API request allowance vs cumulative volume), 'twapSliceFills' (fills generated by the user's TWAP orders).",
       inputSchema: {
         address: ETH_ADDRESS,
         kind: z.enum(["approvedBuilders", "borrowLend", "rateLimit", "twapSliceFills"]),

@@ -21,7 +21,8 @@ export function defineTool<Shape extends ZodRawShapeCompat>(
       title: opts.title,
       description: opts.description,
       inputSchema: opts.inputSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: opts.openWorld ?? true },
+      // destructive/idempotent hints only apply when readOnlyHint is false (MCP spec), so they are omitted.
+      annotations: { readOnlyHint: true, openWorldHint: opts.openWorld ?? true },
     },
     (async (args: unknown) => {
       try {

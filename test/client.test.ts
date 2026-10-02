@@ -53,3 +53,9 @@ test("persistent 5xx gives up after the retry budget", async () => {
   await assert.rejects(get("/api/test-500"), (err: unknown) => err instanceof FlowscanError && err.status === 500 && err.retryable);
   assert.equal(m.calls.length, 3);
 });
+
+test("deterministic upstream 500 ('Check your request body') is not retried", async () => {
+  const m = mockFetch([{ status: 500, body: { error: "A clearinghouseState request failed with: 500. Check your request body for correctness." } }]);
+  await assert.rejects(get("/api/test-500-body"), (err: unknown) => err instanceof FlowscanError && err.status === 500 && !err.retryable);
+  assert.equal(m.calls.length, 1);
+});

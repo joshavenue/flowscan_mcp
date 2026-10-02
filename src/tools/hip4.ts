@@ -7,8 +7,15 @@ import { envelope, matches, page, pick, result, shapeInput } from "../shape.js";
 type Rec = Record<string, unknown>;
 
 /** Shrink one outcome row: drop UI-only flags and replace the embedded question object with its id/name. */
-function compactOutcome(o: Rec): Rec {
-  const { question, completeness: _c, sideSpecs: _s, liveCompleteness: _l, ...rest } = o;
+function compactOutcome(o: Rec, keepContexts = false): Rec {
+  const { question, completeness: _c, sideSpecs: _s, liveCompleteness: _l, yesContext, noContext, ...rest } = o;
+  if (keepContexts) Object.assign(rest, { yesContext, noContext });
+  else {
+    // keep the useful bits of the spot contexts without repeating marks
+    const ctx = (c: unknown) => (c && typeof c === "object" ? { prevDayPx: (c as Rec).prevDayPx, dayNtlVlm: (c as Rec).dayNtlVlm, circulatingSupply: (c as Rec).circulatingSupply } : undefined);
+    const y = ctx(yesContext);
+    if (y) Object.assign(rest, { yesPrevDayPx: y.prevDayPx, yesDayNtlVlm: y.dayNtlVlm, noPrevDayPx: ctx(noContext)?.prevDayPx });
+  }
   const q = question as Rec | null | undefined;
   return q ? { ...rest, questionId: q.questionId, questionName: q.displayName ?? q.name } : rest;
 }
@@ -25,12 +32,13 @@ export function registerHip4Tools(server: McpServer): void {
     {
       title: "HIP-4 prediction markets (questions, active & settled outcomes)",
       description:
-        "The /hip-4 page: HIP-4 outcome (prediction) markets. section='active' (default, ~250): tradable YES/NO outcomes with outcomeId, yes/noAssetId, marketType (binaryPrice, priceTouch, custom, question...), underlying/targetPrice/expiry for price markets, YES/NO mark prices, 24h change, total volume, spot contexts, deployer and question link. 'settled': recently resolved outcomes with settleFraction and per-side trade stats. 'questions': question groups (e.g. tournament winners) with their named outcome ids. 'all': the three lists. Pass outcomeId/yesAssetId/noAssetId to flowscan_hip4_outcome for candles. Source: flowscan.xyz /api/hip-4.",
+        "The /hip-4 page: HIP-4 prediction markets. section='active' (default, ~250): YES/NO outcomes with outcomeId, asset ids, marketType (binaryPrice, priceTouch, custom, question...), underlying/targetPrice/expiry, yesMark/noMark (0-1 = implied probability), 24h change, volume, deployer, question link (full spot contexts with includeContexts). 'settled': resolved outcomes with settleFraction and trade stats. 'questions': question groups with their outcome ids. 'all': all three. Use flowscan_hip4_outcome(outcomeId) for candles.",
       inputSchema: {
         section: z.enum(["active", "settled", "questions", "all"]).optional(),
-        search: z.string().optional().describe("Case-insensitive substring over name, description, category, sub-category, underlying, market type, deployer and question name (e.g. 'BTC', 'Premier League', 'binaryPrice')."),
+        search: z.string().optional().describe("Substring over name, description, category, underlying, type, deployer, question (e.g. 'Premier League')."),
         category: z.string().optional().describe("Filter by category/sub-category/question category substring (e.g. 'NFL', 'Tournament')."),
         settledLimit: z.number().int().min(1).max(1000).optional().describe("How many recent settled outcomes/questions the upstream returns (site default 100)."),
+        includeContexts: z.boolean().optional().describe("Include the full YES/NO spot contexts per outcome (default false)."),
         ...shapeInput,
       },
     },
@@ -41,7 +49,7 @@ export function registerHip4Tools(server: McpServer): void {
       const f = (rows: Rec[]) =>
         rows
           .filter((r) => matches(outcomeText(r), args.search) && (!args.category || [r.category, r.subCategory, (r.question as Rec | null)?.category].some((c) => matches(c ?? "", args.category) && c)))
-          .map((r) => (r.outcomeId !== undefined ? compactOutcome(r) : r));
+          .map((r) => (r.outcomeId !== undefined ? compactOutcome(r, args.includeContexts) : r));
       if (section === "all") {
         const out: Rec = { generatedAt: data.generatedAt };
         const extra: Rec = {};
@@ -63,11 +71,11 @@ export function registerHip4Tools(server: McpServer): void {
     {
       title: "HIP-4 outcome detail with YES/NO candles",
       description:
-        "HIP-4 page outcome drill-down: candles for the YES and NO assets of one outcome over the last N days (compact rows [openTime ms, open, high, low, close, volume, trades]), plus per-side trade stats and, for settled outcomes (settled=true), the settled outcome record. Settled outcomes typically have no candles. Get outcomeId/yesAssetId/noAssetId from flowscan_hip4_markets. Source: flowscan.xyz /api/hip-4/{outcomeId}.",
+        "HIP-4 page outcome drill-down: candles for the YES and NO assets of one outcome over the last N days (compact rows [openTime ms, open, high, low, close, volume, trades]), plus per-side trade stats and, for settled outcomes (settled=true), the settled outcome record. Settled outcomes typically have no candles. Only outcomeId is required (asset ids default to '#<outcomeId>0' YES / '#<outcomeId>1' NO). Get outcomeId from flowscan_hip4_markets.",
       inputSchema: {
         outcomeId: z.number().int(),
-        yesAssetId: z.string().describe("e.g. '#14730'"),
-        noAssetId: z.string().describe("e.g. '#14731'"),
+        yesAssetId: z.string().optional().describe("Default '#<outcomeId>0' (e.g. '#14730'); a missing '#' is added."),
+        noAssetId: z.string().optional().describe("Default '#<outcomeId>1' (e.g. '#14731'); a missing '#' is added."),
         interval: z.enum(["1m", "5m", "15m", "1h", "4h", "1d"]).optional().describe("Candle interval (default '1h', as the site uses)."),
         days: z.number().int().min(1).max(90).optional().describe("Lookback days (default 7)."),
         settled: z.boolean().optional().describe("Set true for settled outcomes (site passes mode=settled)."),
@@ -76,7 +84,11 @@ export function registerHip4Tools(server: McpServer): void {
     },
     async (args) => {
       const route = `/api/hip-4/${encodeURIComponent(String(args.outcomeId))}`;
-      const data = (await get(route, { yesCoin: args.yesAssetId, noCoin: args.noAssetId, interval: args.interval ?? "1h", days: args.days ?? 7, mode: args.settled ? "settled" : undefined })) as Rec;
+      const asset = (v: string | undefined, side: 0 | 1) => {
+        const x = String(v ?? `${args.outcomeId}${side}`).trim();
+        return x.startsWith("#") ? x : `#${x}`;
+      };
+      const data = (await get(route, { yesCoin: asset(args.yesAssetId, 0), noCoin: asset(args.noAssetId, 1), interval: args.interval ?? "1h", days: args.days ?? 7, mode: args.settled ? "settled" : undefined })) as Rec;
       const compact = (c: unknown) => (Array.isArray(c) ? (c as Rec[]).map((k) => [k.t, k.o, k.h, k.l, k.c, k.v, k.n]) : c);
       const settled = data.settledOutcome && typeof data.settledOutcome === "object" ? compactOutcome(data.settledOutcome as Rec) : data.settledOutcome;
       const out = {
@@ -95,7 +107,7 @@ export function registerHip4Tools(server: McpServer): void {
     "flowscan_hip4_labels",
     {
       title: "HIP-4 asset id -> human label",
-      description: "Resolve HIP-4 outcome asset ids like '#14730' (YES) / '#14731' (NO) to readable labels such as 'Arsenal · Yes', as the address page does for HIP-4 spot balances. Returns {labels: {assetId: label}}. Source: flowscan.xyz /api/hip-4/labels.",
+      description: "Resolve HIP-4 outcome asset ids like '#14730' (YES) / '#14731' (NO) to readable labels such as 'Arsenal · Yes', as the address page does for HIP-4 spot balances. Returns {labels: {assetId: label}}.",
       inputSchema: { assets: z.array(z.string()).min(1).max(100).describe("Asset ids, e.g. ['#14730','#14731'] or numeric strings.") },
     },
     async (args) => {

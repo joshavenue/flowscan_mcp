@@ -10,20 +10,9 @@ import { z } from "zod";
 export const MAX_RESULT_CHARS = Number(process.env.FLOWSCAN_MAX_RESULT_CHARS ?? 60_000);
 
 export const shapeInput = {
-  fields: z
-    .array(z.string())
-    .optional()
-    .describe(
-      "Optional list of top-level keys or dotted paths to keep (e.g. [\"summary\", \"by_token.USDC\"]). Everything else is dropped. Use this to keep responses small.",
-    ),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(5000)
-    .optional()
-    .describe("Max items to return for the main list in the response (default varies per tool)."),
-  offset: z.number().int().min(0).optional().describe("Items to skip in the main list (for paging)."),
+  fields: z.array(z.string()).optional().describe("Keep only these keys/dotted paths of `data` (e.g. [\"summary\"])."),
+  limit: z.number().int().min(1).max(5000).optional().describe("Max list items (default per tool)."),
+  offset: z.number().int().min(0).max(1_000_000).optional().describe("List items to skip."),
 };
 
 export type ShapeArgs = {
@@ -95,12 +84,64 @@ export function compactAddressLists(value: unknown, maxLen = 10, sample = 5): un
   return value;
 }
 
-/** Serialize for the model, truncating safely if still too big. */
+type ArrayHit = { path: (string | number)[]; arr: unknown[]; size: number };
+
+/** Serialized size of a JSON value, plus the largest shrinkable array inside it. */
+function measure(v: unknown, path: (string | number)[], best: { hit: ArrayHit | null }): number {
+  if (Array.isArray(v)) {
+    let size = 2 + Math.max(0, v.length - 1);
+    v.forEach((x, i) => (size += measure(x, [...path, i], best)));
+    if (v.length > 1 && (!best.hit || size > best.hit.size)) best.hit = { path, arr: v, size };
+    return size;
+  }
+  if (v && typeof v === "object") {
+    const entries = Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== undefined);
+    let size = 2 + Math.max(0, entries.length - 1);
+    for (const [k, x] of entries) size += JSON.stringify(k).length + 1 + measure(x, [...path, k], best);
+    return size;
+  }
+  const s = JSON.stringify(v);
+  return s === undefined ? 4 : s.length;
+}
+
+/**
+ * Serialize for the model (compact JSON). If the result is over the cap, shorten
+ * the largest arrays (keeping their first items) until it fits and record what
+ * was cut in `_truncated`, so the output stays valid JSON. A plain string cut is
+ * only the last resort (e.g. one giant string value).
+ */
 export function toText(value: unknown): string {
-  const json = JSON.stringify(value, null, 1);
+  const json = JSON.stringify(value);
+  if (json === undefined) return "null";
   if (json.length <= MAX_RESULT_CHARS) return json;
+
+  const budget = MAX_RESULT_CHARS - 1500; // room for the _truncated metadata
+  let root: unknown = JSON.parse(json);
+  if (Array.isArray(root)) root = { items: root };
+  const cuts = new Map<string, { path: string; originalLength: number; kept: number }>();
+  for (let i = 0; i < 200; i++) {
+    const best: { hit: ArrayHit | null } = { hit: null };
+    const total = measure(root, [], best);
+    if (total <= budget) break;
+    const hit = best.hit;
+    if (!hit) break;
+    const len = hit.arr.length;
+    const rest = total - hit.size;
+    const target = Math.floor(len * Math.max(0, budget - rest) / hit.size);
+    const keep = Math.max(1, Math.min(Math.floor(len / 2), target > 0 ? target : Math.floor(len / 2)));
+    const key = hit.path.join(".") || "(root)";
+    const prev = cuts.get(key);
+    cuts.set(key, { path: key, originalLength: prev?.originalLength ?? len, kept: keep });
+    hit.arr.length = keep;
+  }
+  const meta = {
+    _truncated: [...cuts.values()],
+    _truncatedNote: `[TRUNCATED: response was ${json.length} chars; the lists in _truncated were shortened to their first items to stay under ${MAX_RESULT_CHARS}. Use \`fields\`, \`limit\`/\`offset\` or a narrower query for the rest.]`,
+  };
+  const out = JSON.stringify(root && typeof root === "object" ? { ...(root as Record<string, unknown>), ...meta } : root);
+  if (out.length <= MAX_RESULT_CHARS) return out;
   return (
-    json.slice(0, MAX_RESULT_CHARS) +
+    out.slice(0, MAX_RESULT_CHARS) +
     `\n\n[TRUNCATED: response was ${json.length.toLocaleString()} chars; showing first ${MAX_RESULT_CHARS.toLocaleString()}. Narrow it with \`fields\`, \`limit\`/\`offset\` or a more specific tool.]`
   );
 }
@@ -117,7 +158,7 @@ export function errorResult(err: unknown) {
     route: e?.route ?? null,
     source: "www.flowscan.xyz",
   };
-  return { isError: true as const, content: [{ type: "text" as const, text: JSON.stringify(payload, null, 1) }] };
+  return { isError: true as const, content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
 }
 
 /** Standard envelope so every tool result states its provenance. */
@@ -134,6 +175,30 @@ export function matches(hay: unknown, needle: string | undefined): boolean {
 export const ETH_ADDRESS = z
   .string()
   .regex(/^0x[a-fA-F0-9]{40}$/, "Expected a 0x-prefixed 40-hex-char Hyperliquid/EVM address")
-  .describe("Hyperliquid account address (0x + 40 hex chars).");
+  .describe("Account address (0x + 40 hex).");
 
-export const DATE_YMD = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD");
+/** True when s is a real calendar date in YYYY-MM-DD form (rejects 2026-13-45, 2026-02-30). */
+export function isValidYmd(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+export const DATE_YMD = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD")
+  .refine(isValidYmd, "Invalid calendar date (expected a real YYYY-MM-DD date)");
+
+export const todayUtc = (): string => new Date().toISOString().slice(0, 10);
+
+/** Shift a YYYY-MM-DD date by n days (UTC). */
+export function shiftYmd(date: string, n: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+export const isoOf = (ms: unknown): string | null => {
+  const n = Number(ms);
+  return Number.isFinite(n) && n > 0 ? new Date(n).toISOString() : null;
+};

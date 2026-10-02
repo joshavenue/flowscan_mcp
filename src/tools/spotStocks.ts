@@ -20,11 +20,11 @@ export function registerSpotStockTools(server: McpServer): void {
     {
       title: "Tokenized stocks on Hyperliquid spot (xStocks, Dinari)",
       description:
-        "The /spot-stocks page. section='current' (default): summary (market count, providers, 24h/all-time volume, unique holders/traders, total value USD) and per-token stats (underlying, spot market id, provider, mark/mid/prev-day price, circulating supply, 24h/all-time volume, volume/value share, holders, traders, value USD, current order-book depth). 'timeseries': daily volume/holders/traders/valueUsd overall and per token (most recent 30 days by default). 'liquidity': latest order-book depth (best bid/ask, bid/ask depth within 2/5/10/25 bps, in tokens) plus a sampled history of average depth (tokens and USD) over the last `days` (default 1 when `token` is set; omitted for all tokens unless `days` is given). 'topHolders': largest holders per token (address, balance, value USD, % of supply). Source: flowscan.xyz /api/spot-stocks/*.",
+        "The /spot-stocks page (tokenized stocks: xStocks, Dinari). section='current' (default): summary (markets, providers, 24h/all-time volume, holders, traders, value USD) and per-token stats (underlying, provider, mark/mid/prev-day price, supply, volume, holders, traders, value USD, depth). 'timeseries': daily volume/holders/traders/value per token (last 30 days by default). 'liquidity': latest depth within 2/5/10/25 bps of mid (CUMULATIVE; plus a 25-500 bps band) in tokens and, as latestDepthUsd, in USD; with `token` or `days`, a sampled depth history. 'topHolders': largest holders per token (address, balance, value USD, % of supply).",
       inputSchema: {
         section: z.enum(["current", "timeseries", "liquidity", "topHolders"]).optional(),
         token: z.string().optional().describe("Filter to tokens matching this symbol/underlying substring (e.g. 'NVDA', 'TSLAX')."),
-        days: z.number().int().min(1).max(400).optional().describe("timeseries: most recent N days (default 30). liquidity: history window in days (default 1 with `token`, none without)."),
+        days: z.number().int().min(1).max(400).optional().describe("timeseries: last N days (default 30). liquidity: history days (default 1 with token)."),
         ...shapeInput,
       },
     },
@@ -56,6 +56,13 @@ export function registerSpotStockTools(server: McpServer): void {
         const out: Rec = {};
         for (const [k, v] of Object.entries(data)) {
           const { underlying: _u, history: h, ...t } = v as Rec;
+          const px = Number(t.markPx ?? 0);
+          const latest = t.latest as Rec | null;
+          if (latest && px > 0) {
+            const depthUsd: Rec = {};
+            for (const [lk, lv] of Object.entries(latest)) if (/Depth/.test(lk) && typeof lv === "number") depthUsd[`${lk}Usd`] = Math.round(lv * px * 100) / 100;
+            t.latestDepthUsd = depthUsd;
+          }
           const all = (h as Rec[]) ?? [];
           const history = days > 0 ? all.filter((x) => Number(x.timestamp ?? 0) >= since) : [];
           out[k] = { ...t, historyPoints: history.length, ...(days > 0 ? { history } : {}) };

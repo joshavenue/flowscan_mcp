@@ -103,7 +103,10 @@ async function doFetch(route: string, init: RequestInit): Promise<Json> {
     }
     if (res.ok) return body;
 
-    const retryable = res.status === 429 || res.status >= 500;
+    // Hydromancer-backed routes answer malformed queries (e.g. an unknown dex) with a
+    // deterministic 500 "...Check your request body"; retrying cannot help.
+    const deterministic = typeof text === "string" && /check your request body/i.test(text);
+    const retryable = (res.status === 429 || res.status >= 500) && !deterministic;
     const msg =
       (body && typeof body === "object" && "error" in body && typeof (body as { error: unknown }).error === "string"
         ? (body as { error: string }).error

@@ -1,3 +1,5 @@
+import { DEX_ALIASES } from "./dex.js";
+
 /**
  * Human/agent-readable map of what flowscan.xyz shows and which tool serves it.
  * Kept in one place so the README, the `flowscan_coverage` tool and the skill
@@ -8,7 +10,7 @@ export const COVERAGE = {
   what: "Flowscan is a real-time Hyperliquid (HyperCore + HIP-3 + HIP-4) blockchain explorer and analytics site.",
   network: "mainnet only (Flowscan has no testnet mode; this server therefore never serves testnet data)",
   pages: [
-    { path: "/", shows: "Live block activity, recent blocks & transactions, 24h revenue chart, stablecoin perp margin, perp positioning snapshot", tools: ["flowscan_stablecoin_margin", "flowscan_perp_markets", "flowscan_perp_positions", "flowscan_address_perp_positions", "flowscan_revenue_summary", "flowscan_revenue_hypercore_fees"] },
+    { path: "/", shows: "24h revenue panel, stablecoin perp margin, perp positioning snapshot (per-market long/short, largest positions, per-address positions). The homepage's live block/transaction feed is not served (see notServed)", tools: ["flowscan_stablecoin_margin", "flowscan_perp_markets", "flowscan_perp_positions", "flowscan_address_perp_positions", "flowscan_revenue_summary", "flowscan_revenue_hypercore_fees"] },
     { path: "/revenue", shows: "Daily HyperCore revenue (native vs HIP-3), deployer fees by DEX, priority gas (write/read) with top users", tools: ["flowscan_revenue_hypercore_fees", "flowscan_revenue_deployer_fees", "flowscan_revenue_priority_gas", "flowscan_revenue_summary"] },
     { path: "/address/{address}", shows: "Account overview, positions, balances, orders, trades, funding, ledger, staking, vaults, sub-accounts, approved builders, borrow/lend", tools: ["flowscan_address_summary", "flowscan_address_orders", "flowscan_address_fills", "flowscan_address_ledger", "flowscan_address_staking", "flowscan_address_vaults_subaccounts", "flowscan_address_extras", "flowscan_address_perp_positions"] },
     { path: "/validators", shows: "Staking overview, validator list, validator stakers and events", tools: ["flowscan_staking_overview", "flowscan_validator_stakers", "flowscan_staking_events"] },
@@ -26,9 +28,16 @@ export const COVERAGE = {
       item: "Block details (/block/{height}), transaction details (/tx/{hash}), the live block/tx feed, and the address page's portfolio chart, EVM balance and Unit (bridge) operations",
       why: "Flowscan's own servers do not serve these. The Flowscan web page fetches them in your browser directly from Hyperliquid's public endpoints (rpc.hyperliquid.xyz, api.hyperliquid.xyz, api-ui.hyperliquid.xyz, api.hyperunit.xyz). This MCP is restricted to flowscan.xyz, so it does not call those hosts.",
     },
-    { item: "Market prices / candles / order books", why: "Same reason: rendered in-browser from api.hyperliquid.xyz, not from a flowscan.xyz route." },
+    {
+      item: "Live prices such as HYPE/USD or BTC, perp/spot candles and order books",
+      why: "Same reason: rendered in-browser from api.hyperliquid.xyz, not from a flowscan.xyz route. Prices that ARE available: perp entry/liquidation prices in position data, tokenized-stock marks (flowscan_spot_stocks), HIP-4 outcome prices and candles (flowscan_hip4_*), weekend TradFi closes (flowscan_weekend_prices) and Binance RWA last prices (flowscan_hip3_binance_comparison). Priority gas is therefore reported in HYPE, not USD.",
+    },
     { item: "Testnet", why: "Flowscan has no testnet mode." },
   ],
+  hip3DexNames: {
+    note: "The /hip-3 analytics use display names; market symbols, address data and deployer fees use on-chain dex prefixes. Tools accept either.",
+    aliases: DEX_ALIASES.map((d) => ({ name: d.name, prefix: d.prefix, ...(d.formerPrefixes.length ? { formerPrefixes: d.formerPrefixes } : {}) })),
+  },
   rules: [
     "Only https://www.flowscan.xyz is contacted. No Hyperliquid, Hydromancer or other hosts.",
     "All tools are read-only. Responses are trimmed; use `fields`, `limit`, `offset` or a narrower tool for more.",

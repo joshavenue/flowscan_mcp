@@ -1,40 +1,67 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { post } from "../client.js";
+import { dexPrefixes } from "../dex.js";
 import { defineTool } from "../register.js";
-import { envelope, page, pick, result, shapeInput, tail } from "../shape.js";
+import { DATE_YMD, envelope, page, pick, result, shapeInput, tail, todayUtc } from "../shape.js";
 
 type Rec = Record<string, unknown>;
 
 const timeRange = {
-  startTime: z.number().int().optional().describe("Start of range as Unix milliseconds (optional)."),
-  endTime: z.number().int().optional().describe("End of range as Unix milliseconds (optional)."),
+  startDate: DATE_YMD.optional().describe("First UTC day, YYYY-MM-DD (inclusive). Alternative to startTime."),
+  endDate: DATE_YMD.optional().describe("Last UTC day, YYYY-MM-DD (inclusive). Alternative to endTime."),
+  startTime: z.number().int().optional().describe("Start of range as Unix milliseconds."),
+  endTime: z.number().int().optional().describe("End of range as Unix milliseconds."),
   days: z
     .number()
     .int()
     .min(1)
     .max(3650)
     .optional()
-    .describe("Only the most recent N days (default 90 when no startTime/endTime is given). The last row is the current UTC day, still accumulating."),
+    .describe("Most recent N days (default 90 without a range)."),
 };
 
-const DEFAULT_DAYS = 90;
+type RangeArgs = { startDate?: string; endDate?: string; startTime?: number; endTime?: number; days?: number };
 
-function body(type: string, args: { startTime?: number; endTime?: number }): Rec {
+const DEFAULT_DAYS = 90;
+const DAY_MS = 86_400_000;
+
+/** Resolve startDate/endDate (UTC days) or startTime/endTime (ms) into the ms bounds the route takes. */
+function msRange(args: RangeArgs): { startTime?: number; endTime?: number } {
+  if (args.startDate && args.startTime !== undefined) throw new Error("Pass either startDate or startTime, not both.");
+  if (args.endDate && args.endTime !== undefined) throw new Error("Pass either endDate or endTime, not both.");
+  if (args.startDate && args.endDate && args.startDate > args.endDate) throw new Error(`startDate ${args.startDate} is after endDate ${args.endDate}.`);
+  const startTime = args.startDate ? Date.parse(`${args.startDate}T00:00:00Z`) : args.startTime;
+  const endTime = args.endDate ? Date.parse(`${args.endDate}T00:00:00Z`) + DAY_MS - 1 : args.endTime;
+  if (startTime !== undefined && endTime !== undefined && startTime > endTime) throw new Error("Start of range is after its end.");
+  return { startTime, endTime };
+}
+
+function body(type: string, r: { startTime?: number; endTime?: number }): Rec {
   const b: Rec = { type };
-  if (args.startTime !== undefined) b.startTime = args.startTime;
-  if (args.endTime !== undefined) b.endTime = args.endTime;
+  if (r.startTime !== undefined) b.startTime = r.startTime;
+  if (r.endTime !== undefined) b.endTime = r.endTime;
   return b;
 }
 
-/** Most recent N rows; default 90 unless an explicit time range was requested. */
-function recent<T>(rows: unknown, args: { days?: number; startTime?: number; endTime?: number }): T[] {
-  const list = Array.isArray(rows) ? (rows as T[]) : [];
-  const n = args.days ?? (args.startTime === undefined && args.endTime === undefined ? DEFAULT_DAYS : undefined);
-  return tail(list, n);
+/** Most recent N rows (default 90 unless an explicit range was requested); today's row is flagged partial. */
+function recent(rows: unknown, args: RangeArgs, r: { startTime?: number; endTime?: number }): Rec[] {
+  const list = Array.isArray(rows) ? (rows as Rec[]) : [];
+  const n = args.days ?? (r.startTime === undefined && r.endTime === undefined ? DEFAULT_DAYS : undefined);
+  const today = todayUtc();
+  return tail(list, n).map((row) => (row.day === today ? { ...row, partial: true } : row));
 }
 
-const todayUtc = () => new Date().toISOString().slice(0, 10);
+const num = (v: unknown) => Number(v ?? 0) || 0;
+
+function rangeInfo(rows: Rec[]): Rec {
+  return {
+    from: rows[0]?.day ?? null,
+    to: rows.at(-1)?.day ?? null,
+    days: rows.length,
+    includesPartialToday: rows.some((r) => r.partial === true),
+  };
+}
 
 export function registerRevenueTools(server: McpServer): void {
   defineTool(
@@ -43,13 +70,17 @@ export function registerRevenueTools(server: McpServer): void {
     {
       title: "Daily HyperCore fee revenue (native vs HIP-3)",
       description:
-        "The /revenue page 'Daily HyperCore Revenue' chart and the homepage '24h Revenue' panel. One row per UTC day (oldest first, last 90 days by default, history from 2026-03): nativeHypercoreFee (HyperCore fees from native, non-HIP-3 markets) and hip3HypercoreFee (HyperCore fees from HIP-3 DEX markets), both USDC strings. The last row is the current, still-accumulating day. For window totals use flowscan_revenue_summary. Source: flowscan.xyz /api/gossip/info {type:'hypercoreFeeSummary'}.",
+        "/revenue 'Daily HyperCore Revenue' (and homepage 24h panel): one row per UTC day, oldest first (last 90 days by default; history from 2026-03): nativeHypercoreFee (non-HIP-3 markets) and hip3HypercoreFee (HIP-3 markets), USDC strings, plus rangeTotals. Range via days, startDate/endDate or startTime/endTime (ms). Today's row has partial: true. For 1/7/30-day totals use flowscan_revenue_summary.",
       inputSchema: { ...timeRange, ...shapeInput },
     },
     async (args) => {
-      const rows = recent<Rec>(await post("/api/gossip/info", body("hypercoreFeeSummary", args)), args);
+      const r = msRange(args);
+      const rows = recent(await post("/api/gossip/info", body("hypercoreFeeSummary", r)), args, r);
+      const nat = rows.reduce((a, x) => a + num(x.nativeHypercoreFee), 0);
+      const hip3 = rows.reduce((a, x) => a + num(x.hip3HypercoreFee), 0);
+      const rangeTotals = { ...rangeInfo(rows), nativeHypercoreFeeUsdc: nat, hip3HypercoreFeeUsdc: hip3, totalHypercoreFeeUsdc: nat + hip3 };
       const { items, paging } = page(rows, args, 400);
-      return result(envelope("/api/gossip/info", items.map((r) => pick(r, args.fields)), { paging, units: "USDC per day" }));
+      return result(envelope("/api/gossip/info", items.map((x) => pick(x, args.fields)), { paging, units: "USDC per day", rangeTotals }));
     },
   );
 
@@ -59,14 +90,35 @@ export function registerRevenueTools(server: McpServer): void {
     {
       title: "Daily HIP-3 deployer fees by DEX",
       description:
-        "Revenue page 'Deployer Fees' chart: fees earned by HIP-3 perp DEX deployers per UTC day (oldest first, last 90 days by default): totalFee plus byDex [{dex, totalFee}] with lowercase deployer DEX names such as 'xyz', 'para', 'io', 'mkts', 'hyperliquid'. USDC. Source: flowscan.xyz /api/gossip/info {type:'deployerFeeSummary'}.",
-      inputSchema: { ...timeRange, dex: z.string().optional().describe("Only keep this DEX in byDex (exact, case-insensitive, e.g. 'xyz')."), ...shapeInput },
+        "/revenue 'Deployer Fees': HIP-3 deployer fees per UTC day, oldest first (last 90 days by default): totalFee and byDex [{dex, totalFee}] with on-chain names ('xyz', 'para', 'io', 'mkts', 'hyna', 'cash', 'flx', 'vntl', 'km', 'hyperliquid'), plus rangeTotals (overall and per DEX). Today's row has partial: true. USDC. Paid to deployers, so not part of Flowscan's headline protocol revenue.",
+      inputSchema: { ...timeRange, dex: z.string().optional().describe("One DEX: on-chain name ('xyz') or display name ('KM' = km + mkts). Rows then have dexTotalFee and allDexTotalFee."), ...shapeInput },
     },
     async (args) => {
-      let rows = recent<Rec>(await post("/api/gossip/info", body("deployerFeeSummary", args)), args);
-      if (args.dex) rows = rows.map((r) => ({ ...r, byDex: ((r.byDex as Rec[]) ?? []).filter((d) => String(d.dex).toLowerCase() === args.dex!.toLowerCase()) }));
+      const r = msRange(args);
+      let rows = recent(await post("/api/gossip/info", body("deployerFeeSummary", r)), args, r);
+      let dexKeys: string[] | undefined;
+      if (args.dex) {
+        // accept on-chain names ('xyz', 'mkts') and /hip-3 display names ('KM' -> km + mkts)
+        const q = String(args.dex).trim().toLowerCase();
+        dexKeys = dexPrefixes(q).length ? dexPrefixes(q) : [q];
+        const keep = new Set(dexKeys);
+        rows = rows.map((x) => {
+          const byDex = ((x.byDex as Rec[]) ?? []).filter((d) => keep.has(String(d.dex).toLowerCase()));
+          const { totalFee, ...rest } = x;
+          return { ...rest, dexTotalFee: byDex.reduce((a, d) => a + num(d.totalFee), 0), allDexTotalFee: totalFee, byDex };
+        });
+      }
+      const byDexTotals: Record<string, number> = {};
+      for (const x of rows) for (const d of (x.byDex as Rec[]) ?? []) byDexTotals[String(d.dex)] = (byDexTotals[String(d.dex)] ?? 0) + num(d.totalFee);
+      const rangeTotals = {
+        ...rangeInfo(rows),
+        ...(dexKeys
+          ? { dex: dexKeys, totalFeeUsdc: Object.values(byDexTotals).reduce((a, x) => a + x, 0), allDexTotalFeeUsdc: rows.reduce((a, x) => a + num(x.allDexTotalFee), 0) }
+          : { totalFeeUsdc: rows.reduce((a, x) => a + num(x.totalFee), 0) }),
+        byDex: Object.fromEntries(Object.entries(byDexTotals).sort((x, y) => y[1] - x[1])),
+      };
       const { items, paging } = page(rows, args, 400);
-      return result(envelope("/api/gossip/info", items.map((r) => pick(r, args.fields)), { paging, units: "USDC per day" }));
+      return result(envelope("/api/gossip/info", items.map((x) => pick(x, args.fields)), { paging, units: "USDC per day", rangeTotals }));
     },
   );
 
@@ -76,7 +128,7 @@ export function registerRevenueTools(server: McpServer): void {
     {
       title: "Daily priority gas (write/read) with top users",
       description:
-        "Revenue page 'Daily Priority Gas' chart and 'Top Users' table: per UTC day (oldest first, last 90 days by default), writePriority and readPriority {totalGas (HYPE), count} and, with includeTopUsers, the top 5 gas-paying users per day. Source: flowscan.xyz /api/gossip/info {type:'priorityGasSummary'}.",
+        "Revenue page 'Daily Priority Gas' chart and 'Top Users' table: per UTC day (oldest first, last 90 days by default), writePriority and readPriority {totalGas (HYPE), count} and, with includeTopUsers, the top 5 gas-paying users per day, plus rangeTotals. Today's row is flagged partial: true.",
       inputSchema: {
         ...timeRange,
         includeTopUsers: z.boolean().optional().describe("Include per-day topUsers lists (default false to keep output small)."),
@@ -84,7 +136,10 @@ export function registerRevenueTools(server: McpServer): void {
       },
     },
     async (args) => {
-      let rows = recent<Rec>(await post("/api/gossip/info", body("priorityGasSummary", args)), args);
+      const r = msRange(args);
+      let rows = recent(await post("/api/gossip/info", body("priorityGasSummary", r)), args, r);
+      const side = (k: string) => rows.reduce((a, x) => a + num((x[k] as Rec | undefined)?.totalGas), 0);
+      const rangeTotals = { ...rangeInfo(rows), writePriorityGasHype: side("writePriority"), readPriorityGasHype: side("readPriority"), totalGasHype: side("writePriority") + side("readPriority") };
       if (!args.includeTopUsers) {
         rows = rows.map((r) => {
           const out: Rec = {};
@@ -98,7 +153,7 @@ export function registerRevenueTools(server: McpServer): void {
         });
       }
       const { items, paging } = page(rows, args, 400);
-      return result(envelope("/api/gossip/info", items.map((r) => pick(r, args.fields)), { paging, units: "HYPE gas per day" }));
+      return result(envelope("/api/gossip/info", items.map((x) => pick(x, args.fields)), { paging, units: "HYPE gas per day", rangeTotals }));
     },
   );
 
@@ -108,7 +163,7 @@ export function registerRevenueTools(server: McpServer): void {
     {
       title: "Revenue summary (last 1 / 7 / 30 complete days)",
       description:
-        "Convenience aggregate of the /revenue page and the homepage '24h Revenue' card: sums native HyperCore fees (USDC), HIP-3 HyperCore fees (USDC), HIP-3 deployer fees (USDC) and priority gas (HYPE) over the last 1, 7 and 30 complete UTC days, plus the current (partial) UTC day separately and an annualized run-rate from the trailing 7 complete days. Computed from the three /api/gossip/info series on flowscan.xyz.",
+        "Convenience aggregate of the /revenue page and the homepage '24h Revenue' card: sums native HyperCore fees (USDC), HIP-3 HyperCore fees (USDC), their sum totalUsdcExcludingGas, HIP-3 deployer fees (USDC, paid to deployers, not protocol revenue) and priority gas (HYPE) over the last 1, 7 and 30 complete UTC days, plus the current (partial) UTC day separately and an annualized run-rate from the trailing 7 complete days. Computed from the three /api/gossip/info series on flowscan.xyz.",
       inputSchema: { fields: shapeInput.fields },
     },
     async (args) => {
@@ -151,6 +206,7 @@ export function registerRevenueTools(server: McpServer): void {
           nativeHypercoreFeeUsdc: nat.total,
           hip3HypercoreFeeUsdc: hip3.total,
           totalHypercoreFeeUsdc: nat.total + hip3.total,
+          totalUsdcExcludingGas: nat.total + hip3.total,
           deployerFeeUsdc: dep.total,
           priorityGasHype: g.total,
           daysWithData: { hypercoreFees: nat.days, deployerFees: dep.days, priorityGas: g.days },
@@ -177,7 +233,7 @@ export function registerRevenueTools(server: McpServer): void {
           totalHypercoreFeeUsdc: (w7.totalHypercoreFeeUsdc / 7) * 365,
           deployerFeeUsdc: (w7.deployerFeeUsdc / 7) * 365,
         },
-        note: "Days are UTC. Priority gas is denominated in HYPE, fees in USDC; Flowscan's 'Combined' line converts gas to USD at the live HYPE price, which this server does not fetch.",
+        note: "Days are UTC. Flowscan's headline 'Combined' protocol revenue = native HyperCore fees + HIP-3 HyperCore fees (totalUsdcExcludingGas, USDC) + priority gas converted at the live HYPE price. Priority gas here is in HYPE and is NOT converted: the HYPE/USD price is not available from Flowscan's routes and this server does not fetch it, so report gas separately in HYPE. HIP-3 deployer fees go to DEX deployers and are excluded from (not part of) that headline total.",
       };
       return result(envelope("/api/gossip/info", pick(out, args.fields)));
     },
