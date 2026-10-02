@@ -48,6 +48,26 @@ npx tsx scripts/eval/run.ts --run-id after-r3 --only a06,k07,...,x03 --concurren
 npx tsx scripts/eval/judge.ts --run-id after-r3 && npx tsx scripts/eval/report.ts --run-id after-r3
 ```
 
+## Running in Hyperliquid-direct mode
+
+`run.ts` always reads `scripts/eval/mcp.json`; there is no flag for another config. To evaluate the opt-in direct mode (58 tools):
+
+1. Add the switch to the server's `env` in `mcp.json` (or keep a `mcp.direct.json` with it and copy it over `mcp.json` for the run):
+
+   ```json
+   {"mcpServers":{"flowscan":{"command":"node","args":["/home/user/flowscan_mcp/dist/index.js"],"env":{"FLOWSCAN_MAX_CONCURRENCY":"2","FLOWSCAN_HYPERLIQUID_DIRECT":"1"}}}}
+   ```
+
+2. Regenerate `system.md` from the current `skills/flowscan/SKILL.md` (command above); the skill's "Modes" section tells the agent how to behave in each mode.
+3. Run on Node 22 or newer (the live feed, order book and recent trades tools use WebSockets), with a new run id, e.g. `npx tsx scripts/eval/run.ts --run-id direct --concurrency 2`. Keep the concurrency low: Hyperliquid rate-limits per IP, and a 429 is returned to the agent, not retried.
+4. Restore `mcp.json` afterwards, so later strict runs stay strict.
+
+When reading a direct-mode report, keep in mind:
+
+- `report.ts` treats every host other than www.flowscan.xyz as foreign, so it will flag the four allowlisted hosts (`api.hyperliquid.xyz`, `rpc.hyperliquid.xyz`, `api-ui.hyperliquid.xyz`, `api.hyperunit.xyz`). Any other host is a real failure.
+- The header line says "44 tools"; the agent actually had 58 (`availableToolCount` in each record shows the count).
+- The `not_served` prompts were written for strict mode. In direct mode, block, tx, price, candle, EVM-balance and Unit prompts are answerable, so their rubrics (expected behaviour `not_served`) do not apply; grade those by hand or add direct-mode variants to `prompts.json`.
+
 ## How the agent is run
 
 Per prompt, `run.ts` spawns:

@@ -46,3 +46,13 @@ jobs:
         run: npm run smoke
       - name: QA scenarios (from source)
         run: npx tsx scripts/qa/scenarios.ts
+      # Opt-in mode: the same checks with FLOWSCAN_HYPERLIQUID_DIRECT=1, which
+      # also reaches the four allowlisted Hyperliquid hosts.
+      - name: Smoke test, hyperliquid-direct mode
+        run: npm run smoke
+        env:
+          FLOWSCAN_HYPERLIQUID_DIRECT: "1"
+      - name: QA scenarios, hyperliquid-direct mode
+        run: npx tsx scripts/qa/scenarios.ts --upstream
+        env:
+          FLOWSCAN_HYPERLIQUID_DIRECT: "1"

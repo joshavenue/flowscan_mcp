@@ -1,11 +1,14 @@
 /**
  * HTTP client for www.flowscan.xyz.
  *
- * Hard rule: this is the ONLY place in the server that performs network I/O,
- * and it only ever talks to the Flowscan host. No Hyperliquid, Hydromancer or
- * other upstream endpoints are contacted directly; everything goes through the
- * routes that Flowscan's own frontend uses.
+ * Hard rule: this module only ever talks to https://www.flowscan.xyz (every URL
+ * is checked by flowscanUrl() before the request). By default it is the only
+ * network module in the server. The opt-in Hyperliquid-direct mode
+ * (FLOWSCAN_HYPERLIQUID_DIRECT=1) adds a SEPARATE module, src/upstream.ts, with
+ * its own allowlist; nothing in this file changes in that mode.
  */
+
+import { cachedRun, fetchOnce, Semaphore, TtlCache, withRetries } from "./http.js";
 
 export const FLOWSCAN_BASE_URL = (process.env.FLOWSCAN_BASE_URL ?? "https://www.flowscan.xyz").replace(/\/+$/, "");
 export const NETWORK = "mainnet" as const; // flowscan.xyz only serves Hyperliquid mainnet
@@ -32,114 +35,73 @@ export class FlowscanError extends Error {
 
 type Json = unknown;
 
-interface CacheEntry {
-  expires: number;
-  value: Promise<Json>;
-}
+/** The only host this module ever contacts. */
+export const FLOWSCAN_HOST = "www.flowscan.xyz";
 
-const cache = new Map<string, CacheEntry>();
-
+const cache = new TtlCache();
 // Small semaphore so an agent firing many tools at once does not hammer the site.
-let active = 0;
-const waiters: Array<() => void> = [];
-async function acquire(): Promise<() => void> {
-  if (active < MAX_CONCURRENCY) {
-    active++;
-    return release;
-  }
-  await new Promise<void>((resolve) => waiters.push(resolve));
-  active++;
-  return release;
-}
-function release(): void {
-  active--;
-  const next = waiters.shift();
-  if (next) next();
-}
+const semaphore = new Semaphore(MAX_CONCURRENCY);
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+/** Build the absolute URL for a route and refuse anything that is not https://www.flowscan.xyz. */
+export function flowscanUrl(route: string): string {
+  const url = `${FLOWSCAN_BASE_URL}${route}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new FlowscanError(`Refusing malformed Flowscan URL (${route})`, null, route);
+  }
+  if (parsed.protocol !== "https:" || parsed.host !== FLOWSCAN_HOST || parsed.username || parsed.password) {
+    throw new FlowscanError(`Refusing to contact ${parsed.protocol}//${parsed.host}: this client only talks to https://${FLOWSCAN_HOST}`, null, route);
+  }
+  return url;
 }
 
 async function doFetch(route: string, init: RequestInit): Promise<Json> {
-  const url = `${FLOWSCAN_BASE_URL}${route}`;
-  let lastErr: FlowscanError | undefined;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    if (attempt > 0) await sleep(400 * 2 ** (attempt - 1));
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    let res: Response;
-    let text: string;
-    try {
-      res = await fetch(url, {
-        ...init,
-        signal: controller.signal,
-        headers: {
-          accept: "application/json",
-          "user-agent": USER_AGENT,
-          ...(init.headers ?? {}),
+  const url = flowscanUrl(route);
+  const reqInit: RequestInit = {
+    ...init,
+    headers: {
+      accept: "application/json",
+      "user-agent": USER_AGENT,
+      ...(init.headers ?? {}),
+    },
+  };
+  return withRetries<Json>(
+    MAX_RETRIES,
+    () =>
+      fetchOnce<Json>(
+        url,
+        reqInit,
+        TIMEOUT_MS,
+        (res, text, body) => {
+          if (res.ok) return { ok: true, value: body };
+          // Hydromancer-backed routes answer malformed queries (e.g. an unknown dex) with a
+          // deterministic 500 "...Check your request body"; retrying cannot help.
+          const deterministic = typeof text === "string" && /check your request body/i.test(text);
+          const retryable = (res.status === 429 || res.status >= 500) && !deterministic;
+          const msg =
+            (body && typeof body === "object" && "error" in body && typeof (body as { error: unknown }).error === "string"
+              ? (body as { error: string }).error
+              : null) ?? `Flowscan returned HTTP ${res.status} for ${route}`;
+          // Non-retryable client errors (400/404/...) are surfaced immediately.
+          return { ok: false, error: new FlowscanError(msg, res.status, route, body, retryable) };
         },
-      });
-      text = await res.text();
-    } catch (err) {
-      const aborted = (err as { name?: string })?.name === "AbortError";
-      lastErr = new FlowscanError(
-        aborted ? `Flowscan request timed out after ${TIMEOUT_MS}ms (${route})` : `Network error reaching Flowscan (${route}): ${(err as Error).message}`,
-        null,
-        route,
-        undefined,
-        true,
-      );
-      continue;
-    } finally {
-      clearTimeout(timer);
-    }
-
-    let body: Json = text;
-    try {
-      body = text.length ? JSON.parse(text) : null;
-    } catch {
-      /* non-JSON body, keep as text */
-    }
-    if (res.ok) return body;
-
-    // Hydromancer-backed routes answer malformed queries (e.g. an unknown dex) with a
-    // deterministic 500 "...Check your request body"; retrying cannot help.
-    const deterministic = typeof text === "string" && /check your request body/i.test(text);
-    const retryable = (res.status === 429 || res.status >= 500) && !deterministic;
-    const msg =
-      (body && typeof body === "object" && "error" in body && typeof (body as { error: unknown }).error === "string"
-        ? (body as { error: string }).error
-        : null) ?? `Flowscan returned HTTP ${res.status} for ${route}`;
-    lastErr = new FlowscanError(msg, res.status, route, body, retryable);
-    // Non-retryable client errors (400/404/...) are surfaced immediately.
-    if (!retryable) throw lastErr;
-  }
-  throw lastErr ?? new FlowscanError(`Flowscan request failed (${route})`, null, route);
+        (aborted, err) =>
+          new FlowscanError(
+            aborted ? `Flowscan request timed out after ${TIMEOUT_MS}ms (${route})` : `Network error reaching Flowscan (${route}): ${err.message}`,
+            null,
+            route,
+            undefined,
+            true,
+          ),
+      ),
+    () => new FlowscanError(`Flowscan request failed (${route})`, null, route),
+  );
 }
 
-async function request(route: string, init: RequestInit, cacheKey: string | null, ttlMs = CACHE_TTL_MS): Promise<Json> {
-  if (cacheKey) {
-    const hit = cache.get(cacheKey);
-    if (hit && hit.expires > Date.now()) return hit.value;
-  }
-  const run = (async () => {
-    const done = await acquire();
-    try {
-      return await doFetch(route, init);
-    } finally {
-      done();
-    }
-  })();
-  if (cacheKey) {
-    cache.set(cacheKey, { expires: Date.now() + ttlMs, value: run });
-    run.catch(() => cache.delete(cacheKey));
-    if (cache.size > 500) {
-      const now = Date.now();
-      for (const [k, v] of cache) if (v.expires <= now) cache.delete(k);
-    }
-  }
-  return run;
+function request(route: string, init: RequestInit, cacheKey: string | null, ttlMs = CACHE_TTL_MS): Promise<Json> {
+  return cachedRun(cache, semaphore, cacheKey, ttlMs, () => doFetch(route, init));
 }
 
 export type QueryValue = string | number | boolean | undefined | null;

@@ -209,12 +209,13 @@ export function result(value: unknown) {
 }
 
 export function errorResult(err: unknown) {
-  const e = err as { message?: string; status?: number | null; route?: string };
+  const e = err as { message?: string; status?: number | null; route?: string; source?: string; hint?: string };
   const payload = {
     error: e?.message ?? String(err),
     status: e?.status ?? null,
     route: e?.route ?? null,
-    source: "www.flowscan.xyz",
+    source: e?.source ?? "www.flowscan.xyz",
+    ...(e?.hint ? { hint: e.hint } : {}),
   };
   return { isError: true as const, content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
 }
@@ -222,6 +223,15 @@ export function errorResult(err: unknown) {
 /** Standard envelope so every tool result states its provenance. */
 export function envelope(route: string, data: unknown, extra: Record<string, unknown> = {}) {
   return { source: `https://www.flowscan.xyz${route}`, network: "mainnet", ...extra, data };
+}
+
+/**
+ * Envelope for Hyperliquid-direct tools: `source` is the upstream URL actually
+ * called, `request` the body sent (for POST/WebSocket), `shownOn` the Flowscan
+ * page where the same data is visible.
+ */
+export function upstreamEnvelope(source: string, shownOn: string, data: unknown, extra: Record<string, unknown> = {}) {
+  return { source, shownOn, mode: "hyperliquid-direct", network: "mainnet", ...extra, data };
 }
 
 /** Envelope for list tools: applies `fields` to each row and reports unknown paths. */

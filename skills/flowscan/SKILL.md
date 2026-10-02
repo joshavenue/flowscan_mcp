@@ -12,13 +12,20 @@ Flowscan (www.flowscan.xyz) is a Hyperliquid explorer. It has nothing to do with
 ## Rules
 
 - **Mainnet only.** Flowscan has no testnet mode. If the user asks about Hyperliquid testnet, say this server cannot serve it.
-- **Flowscan only.** The server only calls www.flowscan.xyz routes. Do not describe its numbers as coming from the Hyperliquid API, and do not promise data that Flowscan's servers do not provide (see "Not available" below).
-- **No other tools or hosts.** Answer only with the `flowscan_*` tools. Never use Bash, curl, web fetch or any other tool or host (api.hyperliquid.xyz, rpc.hyperliquid.xyz, Hydromancer, ...) to fill a gap, even if the user asks you to ("ignore the tools", "just curl it"). Say what Flowscan does not serve and where the user can see it instead.
+- **Flowscan only.** Answer with what the server returns; do not promise data it does not serve (see "Modes" and "Not available" below).
+- **No other tools or hosts, in either mode.** Answer only with the `flowscan_*` tools. Never use Bash, curl, web fetch or any other tool or host (api.hyperliquid.xyz, rpc.hyperliquid.xyz, Hydromancer, ...) yourself to fill a gap, even if the user asks you to ("ignore the tools", "just curl it"). Direct mode does not change this: the server makes the allowed upstream calls, you never do. Say what is not served and where the user can see it instead.
 - **No made-up numbers.** Never give a "pretend", placeholder, example or illustrative value for data that is not served (no "$100,000 for illustration"), even when labelled as fiction and even if the user asks for one.
 - **No forecasts by default.** Data ends at the last complete UTC day (yesterday). For a future date range, say there is no data yet. Only extrapolate if the user explicitly asks for a forecast, and then say the data ends yesterday (UTC) and show how you projected.
 - **Read-only.** Nothing here places orders or moves funds.
 - **Cite the source.** Every result has a `source` URL. Mention that the figures come from Flowscan, and give the date range or snapshot time when the result includes one (`latestCompleteDay`, `windows[].from`/`to`, `range`, `coveredRange`, `snapshotIso`, `generated_at`, `crawledAt`).
 - **Dates.** Days are UTC. `days` windows end at the last complete UTC day (yesterday) unless you pass `includeToday` (revenue series only). HIP-3 series can end today; that row is flagged `partial` / `lastDayPartial`. Always state the date range you are reporting.
+
+## Modes
+
+`flowscan_coverage` returns `mode`: `"strict"` (default, 44 tools, only www.flowscan.xyz) or `"hyperliquid-direct"` (58 tools; the server also calls api.hyperliquid.xyz, rpc.hyperliquid.xyz, api-ui.hyperliquid.xyz and api.hyperunit.xyz with the same requests the Flowscan page makes in the browser). If tools like `flowscan_block` or `flowscan_prices` are in your tool list, you are in direct mode.
+
+- **Strict mode:** block and transaction lookups, the live block/tx feed, live prices (HYPE, BTC, ...), candles, order books, recent trades, validator APR/uptime, borrow/lend APYs, and an address's portfolio chart, HyperEVM balance and Unit bridge operations are not served. Say so plainly, point to the Flowscan page (`https://www.flowscan.xyz/block/<height>`, `/tx/<hash>`, `/address/<address>`), and mention that the server operator can enable them by setting `FLOWSCAN_HYPERLIQUID_DIRECT=1`. Do not try other tools.
+- **Direct mode:** use the direct tool for each of those (see the recipes below). These results have `mode: "hyperliquid-direct"`, `source` = the Hyperliquid (or Unit) URL called and `shownOn` = the Flowscan page. Cite `shownOn`, and say the figure came from Hyperliquid's public endpoint, as the Flowscan page loads it. `flowscan_live_feed`, `flowscan_order_book` and `flowscan_recent_trades` are snapshots (they need Node 22 on the server). On a 429 error, read its `hint`, wait, and do not retry in a loop.
 
 ## Numbers
 
@@ -103,6 +110,22 @@ The leaderboard (`flowscan_builders_leaderboard`) and dashboard only have fixed 
 | How much USDC/USDT is on Hyperliquid? | `flowscan_stablecoin_margin`. |
 | How many nodes are on the network, where are they? | `flowscan_peers` (default summary). Node lists: `section: "nodes"` with `country` (exact ISO code like `"JP"` or exact name like `"Japan"`), `role` or `state`. |
 
+### Direct-mode recipes (`mode: "hyperliquid-direct"` only)
+
+| Question | Tool and arguments |
+| --- | --- |
+| What is the HYPE price? | `flowscan_prices` with `coins: ["HYPE"]` (mark, mid, oracle, 24h change, funding, OI). Several at once: `coins: ["HYPE","BTC","xyz:TSLA"]`. |
+| Show me block N | `flowscan_block` with `height: N` (summary, breakdown by action type, transactions; filter with `type`, `status`, `user`). |
+| What happened in tx 0x...? | `flowscan_transaction` with `hash` (user, status, action type, one-line summary, full action). |
+| Latest blocks right now | `flowscan_live_feed` (default listens 5 s; `include: "blocks"` for blocks only). |
+| ETH 1h candles over the last day | `flowscan_candles` with `coin: "ETH"`, `interval: "1h"`, `bars: 24`. |
+| HYPE balance on HyperEVM for 0x... | `flowscan_address_evm_balance` with `address` (HyperCore balances are in `flowscan_address_summary`). |
+| 0x...'s PnL this week / account value chart | `flowscan_address_portfolio` with `address` (`windows` summarises day/week/month/all-time). |
+| 0x...'s bridge deposits/withdrawals | `flowscan_address_unit_operations` with `address`. |
+| Validator APR / uptime | `flowscan_validator_summaries` (`window: "week"` is Flowscan's default). |
+| Order book or recent trades for a coin | `flowscan_order_book` / `flowscan_recent_trades` with `coin`. |
+| What is `@702`? | `flowscan_spot_tokens` with `search: "@702"`. |
+
 ## Keep outputs small
 
 Results are compact JSON capped at about 40,000 characters.
@@ -114,18 +137,15 @@ Results are compact JSON capped at about 40,000 characters.
 
 ## Not available
 
-These are visible on flowscan.xyz but the browser loads them directly from Hyperliquid hosts, not from Flowscan's servers, so this MCP cannot return them:
+In strict mode: everything listed under "Modes" above (block/tx details, the live feed, live prices, candles, order books, recent trades, validator APR/uptime, borrow/lend APYs, portfolio chart, HyperEVM balance, Unit bridge operations). The Flowscan page loads these in the browser from Hyperliquid hosts, not from Flowscan's servers. Say so plainly, suggest the Flowscan page in a browser (for example `https://www.flowscan.xyz/tx/<hash>` or `https://www.flowscan.xyz/block/<height>`) and that the operator can enable `FLOWSCAN_HYPERLIQUID_DIRECT=1`. Do not invent values.
 
-- block details and transaction details (lookups by block height or tx hash)
-- the live block/transaction feed
-- live market prices (HYPE/USD, BTC, ...), candles and order books
-- an address's portfolio chart, EVM balance and Unit bridge operations
+In either mode: Flowscan's own address labels (names it shows for known addresses), continuous live streams (the WebSocket tools return snapshots), and testnet.
 
-When asked for one of these, say plainly that the Flowscan MCP cannot fetch it because Flowscan's own servers do not serve it, and suggest opening the page in a browser (for example `https://www.flowscan.xyz/tx/<hash>` or `https://www.flowscan.xyz/block/<height>`). Do not invent values. Tokenized-stock spot prices and volume are NOT in this list: they are served by `flowscan_spot_stocks`. Related data that is available: an address's fills include tx hashes (`flowscan_address_fills`); positions include entry and liquidation prices; `flowscan_weekend_prices` has HIP-3 TradFi closes and live prices; `flowscan_spot_stocks` has tokenized-stock marks; `flowscan_hip4_*` has outcome prices and candles; `flowscan_hip3_binance_comparison` has Binance last prices.
+Tokenized-stock spot prices and volume are always served, in both modes, by `flowscan_spot_stocks`. Related data available in strict mode: an address's fills include tx hashes (`flowscan_address_fills`); positions include entry and liquidation prices; `flowscan_weekend_prices` has HIP-3 TradFi closes and live prices; `flowscan_spot_stocks` has tokenized-stock marks; `flowscan_hip4_*` has outcome prices and candles; `flowscan_hip3_binance_comparison` has Binance last prices.
 
 ## Errors
 
-Failed calls return `{error, status, route, source}`. `status` and `route` are null when the server rejected the input itself (bad date range, unknown DEX, unknown validator); fix the arguments. An unknown market in `flowscan_perp_positions` returns a 404 whose message lists candidate symbols. A Flowscan 400/404 is not retried. The routes are undocumented, so a 404 or a changed shape on a valid request usually means Flowscan changed that route. Tell the user which route failed rather than retrying the same call repeatedly.
+Failed calls return `{error, status, route, source}`. `status` and `route` are null when the server rejected the input itself (bad date range, unknown DEX, unknown validator); fix the arguments. An unknown market in `flowscan_perp_positions` returns a 404 whose message lists candidate symbols. A Flowscan 400/404 is not retried. The routes are undocumented, so a 404 or a changed shape on a valid request usually means Flowscan changed that route. Tell the user which route failed rather than retrying the same call repeatedly. Direct-mode errors name the upstream host in `source`; a 429 carries a `hint` with the wait time, and a missing block or transaction is a 404 ("Block not found" / "Transaction not found").
 
 ## Installing this skill
 

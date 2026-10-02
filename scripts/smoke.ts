@@ -9,6 +9,10 @@
  * tool-specific sanity check.
  *
  * Usage: npm run build && npm run smoke
+ *        FLOWSCAN_HYPERLIQUID_DIRECT=1 npm run smoke   # also exercises the opt-in Hyperliquid-direct tools
+ *
+ * The server runs with scripts/qa/fetch-spy.mjs preloaded, and the smoke fails if
+ * it contacts any host outside the mode's allowlist (strict: www.flowscan.xyz only).
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -45,6 +49,13 @@ const YESTERDAY = new Date(Date.now() - DAY).toISOString().slice(0, 10);
 const MAX_CHARS = 40_000;
 
 const hip4: { outcomeId?: number; yesAssetId?: string; noAssetId?: string } = {};
+/** Mode under test: same switch the server reads. */
+const DIRECT = /^(1|true)$/i.test((process.env.FLOWSCAN_HYPERLIQUID_DIRECT ?? "").trim());
+const STRICT_TOOL_COUNT = 44;
+const DIRECT_TOOL_COUNT = 14;
+const UPSTREAM_HOSTS = ["api.hyperliquid.xyz", "rpc.hyperliquid.xyz", "api-ui.hyperliquid.xyz", "api.hyperunit.xyz"];
+const ALLOWED_HOSTS = new Set(["www.flowscan.xyz", ...(DIRECT ? UPSTREAM_HOSTS : [])]);
+const live: { height?: number; txHash?: string } = {};
 const builderRevenue: Record<string, Json> = {};
 
 function assert(cond: unknown, msg: string): void {
@@ -376,6 +387,124 @@ cases.splice(
   lookupForFomoId,
 );
 
+// Hyperliquid-direct tools (only registered with FLOWSCAN_HYPERLIQUID_DIRECT=1).
+const isDesc = (xs: number[]) => xs.every((x, i) => i === 0 || xs[i - 1] > x);
+const directCases: Case[] = [
+  {
+    tool: "flowscan_coverage",
+    label: "direct mode",
+    args: {},
+    check: (d) => assert(d.mode === "hyperliquid-direct" && d.pages.some((p: Json) => p.path === "/block/{height}") && /api\.hyperunit\.xyz/.test(d.rules[0]), "coverage not in direct mode"),
+  },
+  {
+    tool: "flowscan_live_feed",
+    args: { seconds: 4, limit: 10 },
+    check: (d) => {
+      assert(d.mode === "hyperliquid-direct" && d.source === "wss://rpc.hyperliquid.xyz/ws" && d.shownOn === "https://www.flowscan.xyz/", "envelope");
+      const bs = d.data.blocks;
+      assert(bs.length === 10 && isDesc(bs.map((b: Json) => b.height)), "blocks not newest first");
+      assert(Date.now() - bs[0].blockTime < 120_000 && bs[0].blockTimeIso, "latest block is stale");
+      assert(d.data.stats.blocksPerSec > 1 && d.data.stats.medianBlockIntervalMs > 0, "stats");
+      assert(d.data.txs.length > 0 && d.data.txs[0].timeIso && d.data.txs[0].summary, "txs");
+      // A block a few heights back is surely final on the explorer.
+      live.height = bs[3].height;
+    },
+  },
+  { tool: "flowscan_live_feed", label: "blocks only, 1s", args: { seconds: 1, include: "blocks", limit: 3 }, check: (d) => assert(d.data.blocks.length === 3 && !("txs" in d.data), "include=blocks") },
+  {
+    tool: "flowscan_block",
+    args: () => ({ height: live.height, limit: 20 }),
+    check: (d) => {
+      const b = d.data;
+      assert(b.height === live.height && d.shownOn === `https://www.flowscan.xyz/block/${live.height}`, "height/shownOn");
+      assert(/^0x[0-9a-f]{64}$/.test(b.hash) && /^0x[0-9a-f]{40}$/.test(b.proposer) && b.blockTimeIso, "hash/proposer/time");
+      assert(b.numTxs > 0 && b.txs.length === Math.min(20, b.numTxs) && d.txPaging.total === b.numTxs, "tx table");
+      assert(b.breakdown.reduce((s: number, x: Json) => s + x.count, 0) === b.numTxs, "breakdown does not sum to numTxs");
+      const pick = b.txs.find((t: Json) => t.type === "order" && t.status === "success") ?? b.txs[0];
+      live.txHash = pick.hash;
+    },
+  },
+  { tool: "flowscan_block", label: "filter type=order", args: () => ({ height: live.height, type: "order", limit: 5, includeAction: true }), check: (d) => assert(d.data.txs.every((t: Json) => t.type === "order" && t.action?.type === "order"), "type filter") },
+  { tool: "flowscan_block", label: "unknown height", args: { height: 99_999_999_999 }, expectError: true },
+  {
+    tool: "flowscan_transaction",
+    args: () => ({ hash: live.txHash }),
+    check: (d) => {
+      const t = d.data;
+      assert(t.hash === live.txHash && t.block === live.height && t.timeIso && /^0x[0-9a-f]{40}$/.test(t.user), "tx fields");
+      assert(t.type && t.action?.type === t.type && typeof t.summary === "string" && t.summary.length > 0, "action/summary");
+      assert(d.shownOn === `https://www.flowscan.xyz/tx/${live.txHash}`, "shownOn");
+    },
+  },
+  { tool: "flowscan_transaction", label: "bad hash format", args: { hash: "0x1234" }, expectError: true },
+  {
+    tool: "flowscan_prices",
+    args: { coins: ["BTC", "ETH", "HYPE", "xyz:TSLA"] },
+    check: (d) => {
+      assert(d.data.length === 4 && d.data.every((r: Json) => r.markPx > 0 && r.midPx > 0 && r.oraclePx > 0 && r.dayNtlVlm >= 0), "prices");
+      assert(d.data.map((r: Json) => r.coin).join() === "BTC,ETH,HYPE,xyz:TSLA", "order/names");
+      assert(d.request.some((r: Json) => r.dex === "xyz"), "HIP-3 dex request");
+    },
+  },
+  { tool: "flowscan_prices", label: "top 5 by volume", args: { limit: 5 }, check: (d) => assert(d.data.length === 5 && d.data[0].dayNtlVlm >= d.data[4].dayNtlVlm && d.totals.markets > 50, "top list") },
+  {
+    tool: "flowscan_candles",
+    args: { coin: "BTC", interval: "1h", bars: 24 },
+    check: (d) => {
+      const c = d.data.candles;
+      assert(c.length === 24 && c.every((r: Json, i: number) => (i === 0 || r.t - c[i - 1].t === 3_600_000) && r.l <= Math.min(r.o, r.c) && r.h >= Math.max(r.o, r.c) && r.tIso), "candles");
+      assert(d.data.summary.close === c[23].c, "summary");
+    },
+  },
+  { tool: "flowscan_candles", label: "xyz:TSLA 1d", args: { coin: "xyz:TSLA", interval: "1d", bars: 10 }, check: (d) => assert(d.data.candles.length === 10 && d.data.coin === "xyz:TSLA", "hip3 candles") },
+  {
+    tool: "flowscan_order_book",
+    args: { coin: "BTC" },
+    check: (d) => assert(d.data.bids.length === 10 && d.data.asks.length === 10 && d.data.bestBid < d.data.bestAsk && d.data.spreadBps >= 0 && d.data.bids[9].cumSz >= d.data.bids[0].sz, "book"),
+  },
+  {
+    tool: "flowscan_recent_trades",
+    args: { coin: "BTC", limit: 10 },
+    check: (d) => assert(d.data.trades.length === 10 && d.data.trades.every((t: Json, i: number, a: Json[]) => i === 0 || a[i - 1].time >= t.time) && d.data.trades.every((t: Json) => t.px > 0 && t.timeIso && (t.side === "buy" || t.side === "sell")), "trades"),
+  },
+  {
+    tool: "flowscan_spot_tokens",
+    args: { search: "NVDA" },
+    check: (d) => assert(d.data.some((r: Json) => r.base === "NVDAX" && r.pair === "@702" && r.quote === "USDC"), "NVDAX -> @702"),
+  },
+  { tool: "flowscan_spot_tokens", label: "by pair id", args: { search: "@107" }, check: (d) => assert(d.data.length === 1 && d.data[0].base === "HYPE", "@107 = HYPE") },
+  {
+    tool: "flowscan_perp_dexs",
+    args: {},
+    check: (d) => assert(d.data[0].name === "Hyperliquid" && d.data.some((x: Json) => x.prefix === "xyz" && x.active > 10) && d.data.some((x: Json) => x.prefix === "mkts" && x.name === "KM"), "perp dexs"),
+  },
+  {
+    tool: "flowscan_validator_summaries",
+    args: {},
+    check: (d) => assert(d.data.validators.length > 20 && d.data.summary.totalStakeHype > 1e8 && d.data.validators.some((v: Json) => v.predictedAprPct > 0 && v.uptimePct > 0), "validators"),
+  },
+  { tool: "flowscan_borrow_lend_reserves", args: {}, check: (d) => assert(d.data.some((r: Json) => r.token === "USDC" && r.supplyApyPct >= 0 && r.borrowApyPct > 0), "reserves") },
+  ...[VAULT, BUSY].flatMap((addr): Case[] => [
+    {
+      tool: "flowscan_address_portfolio",
+      label: addr.slice(0, 8),
+      args: { address: addr },
+      check: (d) => {
+        assert(d.source === "https://api-ui.hyperliquid.xyz/info" && d.shownOn === `https://www.flowscan.xyz/address/${addr}`, "envelope");
+        assert(d.data.window === "allTime" && d.data.accountValue.series.length <= 200 && d.data.pnl.series[0].tIso && Object.keys(d.data.windows).length === 8, "portfolio");
+      },
+    },
+    { tool: "flowscan_address_evm_balance", label: addr.slice(0, 8), args: { address: addr }, check: (d) => assert(/^\d+(\.\d+)?$/.test(d.data.balanceHype) && /^\d+$/.test(d.data.wei), "evm balance") },
+    {
+      tool: "flowscan_address_unit_operations",
+      label: addr.slice(0, 8),
+      args: { address: addr },
+      check: (d) => assert(Array.isArray(d.data) && d.totals.operations === d.paging.total && (addr !== BUSY || d.data.some((o: Json) => o.asset === "BTC" && o.direction === "withdrawal" && o.amount > 0)), "unit ops"),
+    },
+  ]),
+];
+if (DIRECT) cases.push(...directCases);
+
 function parsePayload(text: string): { json: Json | null; truncated: boolean } {
   try {
     const json = JSON.parse(text);
@@ -392,19 +521,38 @@ async function main(): Promise<void> {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(ROOT, "dist", "index.js")],
-    env: Object.fromEntries(Object.entries(process.env).filter(([, v]) => typeof v === "string")) as Record<string, string>,
+    env: {
+      ...(Object.fromEntries(Object.entries(process.env).filter(([, v]) => typeof v === "string")) as Record<string, string>),
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import ${path.join(ROOT, "scripts", "qa", "fetch-spy.mjs")}`.trim(),
+    },
     stderr: "pipe",
   });
+  const hostsSeen = new Map<string, number>();
+  let maxUpstreamInflight = 0;
   let serverStderr = "";
-  transport.stderr?.on("data", (b) => (serverStderr += String(b)));
+  transport.stderr?.on("data", (b) => {
+    const chunk = String(b);
+    for (const line of chunk.split("\n")) {
+      const m = line.match(/^\[qa-fetch\] start host=(\S+) inflight=(\d+) max=\d+ group=(\S+)/);
+      if (m) {
+        hostsSeen.set(m[1], (hostsSeen.get(m[1]) ?? 0) + 1);
+        if (m[3] === "upstream") maxUpstreamInflight = Math.max(maxUpstreamInflight, Number(m[2]));
+      } else if (line.trim()) serverStderr += `${line}\n`;
+    }
+  });
   const client = new Client({ name: "flowscan-smoke", version: "0.0.0" });
   await client.connect(transport);
 
   const { tools } = await client.listTools();
   const toolNames = new Set(tools.map((t) => t.name));
-  console.log(`server exposes ${tools.length} tools`);
+  console.log(`server exposes ${tools.length} tools (${DIRECT ? "hyperliquid-direct" : "strict"} mode)`);
 
   const failures: string[] = [];
+  const expectedTools = STRICT_TOOL_COUNT + (DIRECT ? DIRECT_TOOL_COUNT : 0);
+  if (tools.length !== expectedTools) failures.push(`expected ${expectedTools} tools in ${DIRECT ? "direct" : "strict"} mode, got ${tools.length}`);
+  const schemaChars = tools.reduce((a, t) => a + JSON.stringify(t).length, 0);
+  console.log(`total tool schema: ${schemaChars} chars`);
+  if (!DIRECT && schemaChars >= 60_000) failures.push(`strict-mode tool schema is ${schemaChars} chars (limit 60000)`);
   const rows: Array<{ name: string; status: string; ms: number; size: number }> = [];
   const tested = new Set<string>();
   const maxByTool = new Map<string, number>();
@@ -472,12 +620,24 @@ async function main(): Promise<void> {
 
   await client.close();
 
+  // Host allowlist per mode, from the fetch/WebSocket spy.
+  const hosts = [...hostsSeen.keys()].sort();
+  const foreign = hosts.filter((h) => !ALLOWED_HOSTS.has(h));
+  if (foreign.length) failures.push(`contacted hosts outside the ${DIRECT ? "direct" : "strict"}-mode allowlist: ${foreign.join(", ")}`);
+  if (!hostsSeen.has("www.flowscan.xyz")) failures.push("www.flowscan.xyz was never contacted (is the fetch spy loaded?)");
+  if (DIRECT) {
+    const unused = UPSTREAM_HOSTS.filter((h) => !hostsSeen.has(h));
+    if (unused.length) failures.push(`direct mode never contacted: ${unused.join(", ")}`);
+    if (maxUpstreamInflight > 2) failures.push(`upstream concurrency ${maxUpstreamInflight} > 2`);
+  }
+
   console.log("\n=== summary ===");
   console.log(`${"tool".padEnd(70)} ${"status".padEnd(17)} ${"ms".padStart(7)} ${"chars".padStart(7)}`);
   for (const r of rows) console.log(`${r.name.padEnd(70)} ${r.status.padEnd(17)} ${String(r.ms).padStart(7)} ${String(r.size).padStart(7)}`);
   console.log(`\n=== max chars per tool (limit ${MAX_CHARS}) ===`);
   for (const [t, n] of [...maxByTool.entries()].sort((a, b) => b[1] - a[1])) console.log(`${t.padEnd(45)} ${String(n).padStart(7)}`);
   console.log(`\n${rows.length} calls, ${tested.size}/${toolNames.size} tools covered`);
+  console.log(`hosts contacted (${DIRECT ? "hyperliquid-direct" : "strict"} mode): ${hosts.map((h) => `${h} x${hostsSeen.get(h)}`).join(", ")}${DIRECT ? `; max upstream in flight ${maxUpstreamInflight}` : ""}`);
 
   const fs = builderRevenue.fomoSocial;
   const fi = builderRevenue.fomoId;

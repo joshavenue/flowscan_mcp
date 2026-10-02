@@ -2,18 +2,45 @@
 
 An MCP server that exposes the data shown on [flowscan.xyz](https://www.flowscan.xyz) as tools for AI agents. Flowscan is a real-time explorer and analytics site for the Hyperliquid blockchain (HyperCore, HIP-3 perp DEXs and HIP-4 outcome markets). It is not related to the Flow blockchain. With this server an agent can answer questions such as "what did Hyperliquid earn in fees yesterday", "who holds the largest BTC longs", "which builder code earned the most this week" or "what positions does 0x... have open", using the same numbers a person would see on the site.
 
-- 44 read-only tools, grouped by Flowscan page
+- 44 read-only tools, grouped by Flowscan page; 58 with the opt-in [Hyperliquid-direct mode](#two-modes)
 - Hyperliquid mainnet only (Flowscan has no testnet mode)
 - No API key
-- stdio transport, Node.js 20 or newer
+- stdio transport, Node.js 20 or newer (22 or newer for the three WebSocket tools of direct mode)
 
-## Design rule: only flowscan.xyz
+## Two modes
 
-The server sends requests to exactly one host: `https://www.flowscan.xyz`. It calls the same `/api/*` routes the Flowscan web frontend calls. It never contacts `api.hyperliquid.xyz`, `rpc.hyperliquid.xyz`, `api-ui.hyperliquid.xyz`, `api.hyperunit.xyz`, Hydromancer or any other upstream directly. (The address tools use Flowscan's own `/api/hydromancer/info` route. That route is served by www.flowscan.xyz; whatever Flowscan's backend does behind it is not visible to, or called by, this server.)
+The server has two modes. The default is strict; the second is opt-in.
 
-This rule has a cost: some things you can see on Flowscan are fetched by your browser straight from Hyperliquid hosts, not from Flowscan's servers, so this MCP cannot return them. See [Not covered](#not-covered).
+| | Strict (default) | Hyperliquid-direct (opt-in) |
+| --- | --- | --- |
+| Enable | nothing to set | `FLOWSCAN_HYPERLIQUID_DIRECT=1` (or `true`) in the server's environment |
+| Tools | 44 | 58: the same 44 plus 14 [Hyperliquid-direct tools](#hyperliquid-direct-tools-opt-in) |
+| Hosts contacted | only `https://www.flowscan.xyz` | `www.flowscan.xyz` plus exactly `api.hyperliquid.xyz`, `rpc.hyperliquid.xyz`, `api-ui.hyperliquid.xyz` and `api.hyperunit.xyz` (HTTPS, and WSS to the two Hyperliquid WebSocket endpoints) |
+| Adds | | block and transaction lookups, the live block/tx feed, prices, candles, order books, recent trades, spot token directory, perp DEX list, validator APR/uptime, borrow/lend APYs, and the address page's portfolio chart, HyperEVM balance and Unit bridge operations |
+| Tool list size (JSON schemas the client loads) | about 59,700 characters | about 74,300 characters |
 
-These `/api/*` routes are undocumented. Flowscan can change them at any time. When a route breaks, the tool returns a structured error that names the route (see [Errors](#errors)) instead of guessing.
+The tool list is loaded into the model's context, so direct mode costs roughly a quarter more context on every conversation. Enable it only if you need the extra panels.
+
+### Strict mode: only flowscan.xyz
+
+The server sends requests to exactly one host: `https://www.flowscan.xyz`. It calls the same `/api/*` routes the Flowscan web frontend calls. It never contacts `api.hyperliquid.xyz`, `rpc.hyperliquid.xyz`, `api-ui.hyperliquid.xyz`, `api.hyperunit.xyz`, Hydromancer or any other upstream directly. This is enforced in code: the Flowscan client (`src/client.ts`) refuses any URL that is not `https://www.flowscan.xyz`, so `FLOWSCAN_BASE_URL` cannot point it anywhere else, and the upstream client refuses every request while the switch is off. (The address tools use Flowscan's own `/api/hydromancer/info` route. That route is served by www.flowscan.xyz; whatever Flowscan's backend does behind it is not visible to, or called by, this server.)
+
+This rule has a cost: some things you can see on Flowscan are fetched by your browser straight from Hyperliquid hosts, not from Flowscan's servers, so strict mode cannot return them. See [Not covered](#not-covered).
+
+### Hyperliquid-direct mode (opt-in)
+
+With `FLOWSCAN_HYPERLIQUID_DIRECT=1`, the server also serves those in-browser panels by making exactly the requests the Flowscan page makes (the same request bodies and WebSocket subscriptions, found in Flowscan's JavaScript bundles) to exactly the hosts the page uses. Hard limits, in `src/upstream.ts` and unit-tested:
+
+- Allowlist: `api.hyperliquid.xyz`, `rpc.hyperliquid.xyz`, `api-ui.hyperliquid.xyz`, `api.hyperunit.xyz`; `https://` or `wss://` only, default port only. Anything else is refused before any I/O.
+- Mainnet only (these are the mainnet hosts Flowscan uses).
+- At most 2 upstream requests at a time (WebSockets have their own limit of 2).
+- Short caches: prices 5 s, metadata (spot/perp metas, validator summaries, reserves) 60 s, explorer blocks/txs and Unit operations 30 s, portfolio 20 s; the HyperEVM balance is not cached.
+- HTTP 429 from Hyperliquid is never retried; the error carries a `hint` with how long to wait. Other 4xx are not retried; 5xx, timeouts and network errors are retried up to twice.
+- `flowscan_live_feed`, `flowscan_order_book` and `flowscan_recent_trades` use WebSockets and need Node.js 22 or newer (global `WebSocket`). On Node 20 they return an error; everything else works.
+
+Results from these tools use a different envelope (see [Output shaping](#output-shaping)): `source` is the upstream URL that was called, `shownOn` is the Flowscan page where the same data appears, and `mode` is `"hyperliquid-direct"`.
+
+These `/api/*` routes and upstream requests are undocumented. Flowscan or Hyperliquid can change them at any time. When one breaks, the tool returns a structured error that names the route (see [Errors](#errors)) instead of guessing.
 
 ## Quick start
 
@@ -131,15 +158,27 @@ Cursor reads `.cursor/mcp.json` in the project (or `~/.cursor/mcp.json` for all 
 
 ### Passing environment variables
 
-Any client config above accepts an `env` object, for example:
+Any client config above accepts an `env` object. To turn on [Hyperliquid-direct mode](#two-modes):
 
 ```json
-"flowscan": {
-  "command": "node",
-  "args": ["/absolute/path/to/flowscan_mcp/dist/index.js"],
-  "env": { "FLOWSCAN_MAX_RESULT_CHARS": "30000" }
+{
+  "mcpServers": {
+    "flowscan": {
+      "command": "node",
+      "args": ["/absolute/path/to/flowscan_mcp/dist/index.js"],
+      "env": { "FLOWSCAN_HYPERLIQUID_DIRECT": "1" }
+    }
+  }
 }
 ```
+
+The same block works in `claude_desktop_config.json`, a project `.mcp.json` and `.cursor/mcp.json`; see [examples/claude_desktop_config.direct.json](examples/claude_desktop_config.direct.json) and [examples/mcp.direct.json](examples/mcp.direct.json). With the Claude Code CLI:
+
+```sh
+claude mcp add flowscan -e FLOWSCAN_HYPERLIQUID_DIRECT=1 -- npx -y github:joshavenue/flowscan_mcp
+```
+
+Other variables (see [Environment variables](#environment-variables)) go in the same `env` object, for example `"FLOWSCAN_MAX_RESULT_CHARS": "30000"`. Restart the client after changing them; the mode is fixed when the server starts.
 
 ### Agent skill
 
@@ -147,7 +186,7 @@ Any client config above accepts an `env` object, for example:
 
 ## Tools
 
-All 44 tools are read-only (annotated `readOnlyHint`). Required parameters are in **bold**. "fields/limit/offset" means the tool accepts the standard [output-shaping](#output-shaping) parameters; "fields" alone means it only accepts `fields`. Default page sizes are noted where a tool pages a list. Each tool's description names the Flowscan page it mirrors; the route is in the `source` field of every result.
+These 44 tools are available in both modes. All tools are read-only (annotated `readOnlyHint`). Required parameters are in **bold**. "fields/limit/offset" means the tool accepts the standard [output-shaping](#output-shaping) parameters; "fields" alone means it only accepts `fields`. Default page sizes are noted where a tool pages a list. Each tool's description names the Flowscan page it mirrors; the route is in the `source` field of every result.
 
 ### Start here
 
@@ -265,6 +304,29 @@ The leaderboard and dashboard only offer fixed windows (1d/7d/30d/90d/all_time a
 
 Addresses must be `0x` followed by 40 hex characters. Exact parameter descriptions are in the tool schemas the server advertises (`src/tools/*.ts`).
 
+## Hyperliquid-direct tools (opt-in)
+
+Registered only when `FLOWSCAN_HYPERLIQUID_DIRECT=1` (see [Two modes](#two-modes)). Each mirrors a Flowscan panel that the Flowscan page loads from Hyperliquid in the browser; "Shown on" is the page, and the result's `shownOn` field links it. Same conventions as above: required parameters in **bold**, "fields/limit/offset" = the standard shaping parameters.
+
+| Tool | Shown on | Upstream | Returns | Key params |
+| --- | --- | --- | --- | --- |
+| `flowscan_block` | `/block/{height}` | `rpc.hyperliquid.xyz/explorer` (`blockDetails`) | Height, time, hash, proposer, tx count, success rate, failed count, transaction breakdown by action type, and the transactions table (hash, user, type, status, one-line summary). | **`height`**, `type` (action type, e.g. `order`), `status` (`success`, `error`), `user`, `includeAction` (raw actions, large), fields/limit/offset (default 50 txs) |
+| `flowscan_transaction` | `/tx/{hash}` | `rpc.hyperliquid.xyz/explorer` (`txDetails`) | Hash, block, time, user, status/error, action type and Flowscan label, a one-line summary (asset, side, size, price, notional, amount, destination) and the full action payload. | **`hash`**, fields |
+| `flowscan_live_feed` | `/` (Live Block Activity, Recent Blocks, Recent Transactions) | `wss://rpc.hyperliquid.xyz/ws` | Listens for `seconds`, then returns the latest blocks (height, time, hash, proposer, tx count) and transactions (user, action summary, status), newest first, with blocks/s, txs/s and block-interval stats. Node 22+. | `seconds` (default 5, max 15), `include` (`blocks`, `txs`, `both` default), `limit` (default 20, max 120; transactions max 50) |
+| `flowscan_prices` | `/` (perp positioning), `/revenue` (HYPE price) | `api.hyperliquid.xyz/info` (`allMids`, `metaAndAssetCtxs`) | Mark, mid, oracle, 24h change, hourly funding and APR, premium, open interest (base and USD), 24h notional volume, max leverage. With `coins`: those coins (HIP-3 as `xyz:TSLA`; spot pairs/tokens give the mid only). Without: the top markets of one DEX. | `coins` (e.g. `["HYPE","BTC","xyz:TSLA"]`), `dex` (prefix or display name; default main), `sortBy` (`volume` default, `openInterest`, `change`, `funding`), `includeDelisted`, fields/limit/offset (default 20) |
+| `flowscan_candles` | `/address/{address}` (position price chart) | `api.hyperliquid.xyz/info` (`candleSnapshot`) | OHLCV rows `{t, tIso, o, h, l, c, v, n}`, oldest first, with an open/close/high/low/change/volume summary. Coin: perp (`BTC`), HIP-3 (`xyz:TSLA`), spot pair (`@107`) or spot token (`NVDAX`). | **`coin`**, `interval` (`1m`, `3m`, `5m`, `15m`, `30m`, `1h` default, `2h`, `4h`, `8h`, `12h`, `1d`, `3d`, `1w`, `1M`), `bars` (default 100, max 500, counted back from `endTime`), `startTime`, `endTime` (Unix ms; default now) |
+| `flowscan_order_book` | `/hip-4` (outcome order books) | `wss://api.hyperliquid.xyz/ws` (`l2Book`) | One L2 snapshot: top bids/asks with size, order count, cumulative size and USD, best bid/ask, mid, spread (bps). Coin: `BTC`, `xyz:TSLA`, `@107`, `NVDAX` or an outcome side like `#14730`. Node 22+. | **`coin`**, `depth` (default 10, max 20), `nSigFigs` (2 to 5, aggregates levels), `mantissa` (1, 2 or 5; only with `nSigFigs: 5`) |
+| `flowscan_recent_trades` | `/hip-4` (outcome trades) | `wss://api.hyperliquid.xyz/ws` (`trades`) | The most recent trades (Hyperliquid sends the last 30): time, side (buy = taker bought), price, size, USD notional, hash, buyer, seller, plus buy/sell volume and VWAP. Node 22+. | **`coin`**, `limit` (default and max 30), fields |
+| `flowscan_spot_tokens` | `/address/{address}` (spot balance names and values) | `api.hyperliquid.xyz/info` (`spotMetaAndAssetCtxs`) | Spot directory per pair: pair id (`@702`), base/quote token, token index, decimals, mark/mid, 24h change and volume, circulating/total supply, market cap. Maps `@702` to `NVDAX`. | `search` (name, full name, pair id or token index), `sortBy` (`volume` default, `marketCap`, `name`), fields/limit/offset (default 50) |
+| `flowscan_perp_dexs` | `/weekend-trading` | `api.hyperliquid.xyz/info` (`allPerpMetas`, `spotMeta`) | Every perp DEX (main + HIP-3): index, on-chain prefix, Flowscan display name, collateral token, active/delisted market counts and market names. | `dex` (prefix, display name, or `main`), `includeDelisted`, `namesLimit` (default 40; all with `dex`) |
+| `flowscan_validator_summaries` | `/validators` (APR, uptime, recent blocks columns) | `api.hyperliquid.xyz/info` (`validatorSummaries`) | Per validator: stake (HYPE), commission, jailed/active, recent blocks proposed, uptime % and predicted APR % for the window, plus average APR. | `window` (`day`, `week` default, `month`), `sortBy` (`stake` default, `apr`, `uptime`, `commission`, `recentBlocks`, `name`), `order` (`asc`, `desc`), `search`, `excludeJailed`, fields/limit/offset (default 50) |
+| `flowscan_borrow_lend_reserves` | `/address/{address}` (Borrow/Lend tab APYs) | `api.hyperliquid.xyz/info` (`allBorrowLendReserveStates`, `spotMeta`) | Per token: supply APY, borrow APY, utilization, total supplied/borrowed, available, oracle price, LTV. | `token` (e.g. `USDC`, `HYPE`) |
+| `flowscan_address_portfolio` | `/address/{address}` (portfolio chart) | `api-ui.hyperliquid.xyz/info` (`portfolio`) | Account value and PnL history for a window, downsampled with ISO times, latest/min/max and window volume; `windows` summarises every window (latest account value, PnL, volume). | **`address`**, `window` (`day`, `week`, `month`, `allTime` default, `perpDay`, `perpWeek`, `perpMonth`, `perpAllTime`), `series` (`accountValue`, `pnl`, `both` default), `maxPoints` (default 200) |
+| `flowscan_address_evm_balance` | `/address/{address}` (EVM balance) | `rpc.hyperliquid.xyz/evm` (`eth_getBalance`) | HyperEVM HYPE balance: exact wei, HYPE decimal string and a float. HyperCore balances are in `flowscan_address_summary`. | **`address`** |
+| `flowscan_address_unit_operations` | `/address/{address}` (Unit table) | `api.hyperunit.xyz/operations/{address}` (USD values priced with `metaAndAssetCtxs`/`spotMetaAndAssetCtxs`) | Unit bridge operations between Hyperliquid and Bitcoin/Ethereum/Solana, newest first: time, asset, chains, direction, amount, USD value at current prices, state, tx hashes and addresses; totals by direction and asset. | **`address`**, `direction` (`deposit`, `withdrawal`), fields/limit/offset (default 50) |
+
+In direct mode `flowscan_coverage` reports `mode: "hyperliquid-direct"` and lists these tools on their pages.
+
 ## DEX names
 
 The `/hip-3` analytics use display names, while market symbols (`xyz:TSLA`), address data and deployer fees use the on-chain DEX prefix. Tools that take a `dex` (the HIP-3 tools, `flowscan_revenue_deployer_fees` and `flowscan_address_summary`) accept either form, case-insensitively. `flowscan_hip3_dex` and `flowscan_address_summary` reject an unknown name with an error that lists the valid ones; in the other tools an unknown name simply matches nothing.
@@ -299,6 +361,21 @@ Several Flowscan routes return megabytes of JSON. Tool results are shaped so the
 
 `source` is the Flowscan route the data came from. For POST routes it is the route path only, without the request body (such as `{type: "hypercoreFeeSummary"}`). Some tools add other top-level keys such as `units`, `kind`, `window`, `capped`, `coveredRange`, `nextStartTime` or `note`. `flowscan_coverage` returns the coverage map directly, without the envelope.
 
+The [Hyperliquid-direct tools](#hyperliquid-direct-tools-opt-in) use this envelope instead (illustrative block height, abridged):
+
+```json
+{
+  "source": "https://rpc.hyperliquid.xyz/explorer",
+  "shownOn": "https://www.flowscan.xyz/block/812345678",
+  "mode": "hyperliquid-direct",
+  "network": "mainnet",
+  "request": { "height": 812345678, "type": "blockDetails" },
+  "data": { "...": "..." }
+}
+```
+
+`source` is the upstream URL that was called, `shownOn` the Flowscan page where the same data is shown, and `request` the body or WebSocket subscription that was sent (a list when several requests were combined). Some add `shownOnNote`, `paging` or `totals`.
+
 **`fields`.** A list of keys or dotted paths to keep, relative to `data`, for example `["summary", "by_token.USDC"]`. A leading `data.` is accepted and stripped. Everything else in `data` is dropped. When `data` is a list of rows (revenue series, orders, fills, ledger), paths are relative to each row (`delta.usdc`, not `data.delta.usdc`). A path that matches nothing is never silent: the result gets `_fieldsNotFound` (the paths that missed) and `_availableFields` (the keys that do exist, from `data` or its first row), so a typo cannot be mistaken for "no data".
 
 **`limit` / `offset`.** Page through the tool's main list. Each tool has its own default page size (see the tools table). `paging.hasMore` tells you whether there is more. The address orders, fills and ledger tools report `paging.rowsReturned` instead of `paging.total`, because the upstream response may itself be capped. Some tools have a `limit` with a different meaning, such as the number of positions or events Flowscan returns; their descriptions say so.
@@ -324,6 +401,8 @@ Failures come back as an MCP tool error (`isError: true`) with this body:
 {"error":"Flowscan returned HTTP 404 for /api/...","status":404,"route":"/api/...","source":"www.flowscan.xyz"}
 ```
 
+For the Hyperliquid-direct tools, `source` is the upstream host and `route` the URL plus request type, for example `"https://api.hyperliquid.xyz/info {type:candleSnapshot}"`. A 429 from Hyperliquid also has a `hint` with how long to wait; it is not retried. A block or transaction that does not exist is a 404 ("Block not found" / "Transaction not found").
+
 `status` is `null` for timeouts and network errors. `status` and `route` are both `null` for errors the server raises itself before calling Flowscan, such as an invalid date range, an unknown DEX name or an unknown validator. An unknown market in `flowscan_perp_positions` is a 404 whose message lists candidate symbols.
 
 Only transient failures are retried, up to twice with backoff: HTTP 429, HTTP 5xx, timeouts and network errors. HTTP 400/404 and the deterministic HTTP 500 that Flowscan's address route returns for a malformed query (body containing "Check your request body") are returned immediately.
@@ -334,8 +413,9 @@ All are optional.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `FLOWSCAN_BASE_URL` | `https://www.flowscan.xyz` | Base URL for requests. Only useful for testing against a mirror or a mock; the `source` field in results always shows `https://www.flowscan.xyz`. |
-| `FLOWSCAN_TIMEOUT_MS` | `45000` | Per-request timeout in milliseconds. |
+| `FLOWSCAN_HYPERLIQUID_DIRECT` | unset (strict mode) | `1` or `true` turns on [Hyperliquid-direct mode](#two-modes): 14 more tools and the four allowlisted upstream hosts. |
+| `FLOWSCAN_BASE_URL` | `https://www.flowscan.xyz` | Kept for tests only. The client refuses any URL that is not `https://www.flowscan.xyz`, so it cannot point the server at another host. |
+| `FLOWSCAN_TIMEOUT_MS` | `45000` (Flowscan), `30000` (upstream) | Per-request timeout in milliseconds. When set, it applies to both. |
 | `FLOWSCAN_MAX_CONCURRENCY` | `4` | Maximum simultaneous requests to Flowscan. Extra calls wait. |
 | `FLOWSCAN_CACHE_TTL_MS` | `20000` | In-memory cache lifetime for ordinary responses. Identical requests within this window reuse the cached result. |
 | `FLOWSCAN_LONG_CACHE_TTL_MS` | `300000` | Cache lifetime for large, slow-changing payloads (HIP-3 snapshot, per-DEX and builder stats, Binance comparison, builders leaderboard and all-time summary, builders user series, builder intelligence). |
@@ -343,22 +423,27 @@ All are optional.
 
 ## Not covered
 
-These appear on flowscan.xyz but are not served by Flowscan's servers. The Flowscan page fetches them in your browser directly from Hyperliquid hosts (`rpc.hyperliquid.xyz`, `api.hyperliquid.xyz`, `api-ui.hyperliquid.xyz`, `api.hyperunit.xyz`). Because this server only talks to www.flowscan.xyz, it cannot return them:
+### Not covered in strict mode (available in direct mode)
 
-- Block details (`/block/{height}`)
-- Transaction details (`/tx/{hash}`)
-- The live block and transaction feed on the homepage
-- Live market prices (HYPE/USD, BTC and so on), candles and order books
-- On the address page: the portfolio chart, the EVM balance and Unit bridge operations
+These appear on flowscan.xyz but are not served by Flowscan's servers. The Flowscan page fetches them in your browser directly from Hyperliquid hosts (`rpc.hyperliquid.xyz`, `api.hyperliquid.xyz`, `api-ui.hyperliquid.xyz`, `api.hyperunit.xyz`). In strict mode the server only talks to www.flowscan.xyz, so it cannot return them. With `FLOWSCAN_HYPERLIQUID_DIRECT=1` they are served by the tool in brackets:
 
-Also not available:
+- Block details, `/block/{height}` (`flowscan_block`)
+- Transaction details, `/tx/{hash}` (`flowscan_transaction`)
+- The homepage live block and transaction feed (`flowscan_live_feed`)
+- Live market prices such as HYPE/USD or BTC, funding and 24h volume (`flowscan_prices`), candles (`flowscan_candles`), order books (`flowscan_order_book`) and recent trades (`flowscan_recent_trades`)
+- The spot token directory and perp DEX market lists (`flowscan_spot_tokens`, `flowscan_perp_dexs`)
+- Validator APR, uptime and recent blocks on `/validators` (`flowscan_validator_summaries`)
+- Borrow/lend supply and borrow APYs (`flowscan_borrow_lend_reserves`)
+- On the address page: the portfolio chart (`flowscan_address_portfolio`), the HyperEVM balance (`flowscan_address_evm_balance`) and Unit bridge operations (`flowscan_address_unit_operations`)
 
+Some prices are available in strict mode because Flowscan serves them: entry and liquidation prices in position data, tokenized-stock marks (`flowscan_spot_stocks`), HIP-4 outcome prices and candles (`flowscan_hip4_*`), weekend TradFi closes (`flowscan_weekend_prices`) and Binance last prices for RWA symbols (`flowscan_hip3_binance_comparison`). Because the HYPE price is not available in strict mode, priority gas is reported in HYPE, not USD.
+
+### Not covered in either mode
+
+- Flowscan's hard-coded address label book (the names the site shows for known addresses).
+- Live streaming updates. The WebSocket tools return a snapshot (or what arrived during a few seconds), not a continuous stream.
 - Testnet. Flowscan only shows Hyperliquid mainnet, so every result is mainnet.
 - Any write action. All tools are read-only; nothing places orders or moves funds.
-
-Some prices are available because Flowscan serves them: entry and liquidation prices in position data, tokenized-stock marks (`flowscan_spot_stocks`), HIP-4 outcome prices and candles (`flowscan_hip4_*`), weekend TradFi closes (`flowscan_weekend_prices`) and Binance last prices for RWA symbols (`flowscan_hip3_binance_comparison`). Because the HYPE price is not available, priority gas is reported in HYPE, not USD.
-
-For anything in the list above, open the page on flowscan.xyz in a browser or use a separate Hyperliquid tool.
 
 ## Dates and windows
 
@@ -381,7 +466,7 @@ Data is as fresh as Flowscan's own backend, plus this server's cache:
 - Builder Intelligence: roughly daily.
 - HIP-3, HIP-4 and builder payloads carry their own `generated_at` / `generatedAt` where Flowscan provides one.
 
-This server caches responses in memory for 20 seconds (60 seconds for the HIP-4 market list, 5 minutes for the large payloads listed under `FLOWSCAN_LONG_CACHE_TTL_MS`). Restarting the server clears the cache.
+This server caches Flowscan responses in memory for 20 seconds (60 seconds for the HIP-4 market list, 5 minutes for the large payloads listed under `FLOWSCAN_LONG_CACHE_TTL_MS`). In direct mode, upstream responses are cached briefly (prices 5 s, metadata 60 s, blocks/txs 30 s; see [Two modes](#hyperliquid-direct-mode-opt-in)), and the WebSocket tools always open a fresh connection. Restarting the server clears the caches.
 
 ## Evaluation
 
@@ -399,6 +484,8 @@ npm run build        # compile src/ to dist/
 npm test             # offline unit tests, no network
 npm run smoke        # live smoke test against www.flowscan.xyz (uses dist/, so build first)
 npx tsx scripts/qa/scenarios.ts   # live QA scenarios, run from src/
+FLOWSCAN_HYPERLIQUID_DIRECT=1 npm run smoke     # smoke test including the 14 direct-mode tools
+npx tsx scripts/qa/scenarios.ts --upstream      # direct-mode QA scenarios (101-106)
 npm run dev          # run the server from source with tsx
 ```
 
@@ -408,11 +495,14 @@ Layout:
 
 - `src/index.ts`: stdio entry point
 - `src/server.ts`: creates the MCP server and registers tool groups
-- `src/client.ts`: the only module that does network I/O (timeouts, retries, cache, concurrency limit)
+- `src/client.ts`: the www.flowscan.xyz client (host guard, timeouts, retries, cache, concurrency limit)
+- `src/upstream.ts`: the direct-mode client (mode switch, host allowlist, HTTPS and WebSocket, concurrency 2, caches, 429 handling)
+- `src/hyperliquid.ts`: the upstream request bodies, each the one Flowscan's own JavaScript sends
+- `src/http.ts`: shared fetch, retry, cache and semaphore helpers
 - `src/dex.ts`: HIP-3 DEX display name to on-chain prefix table
 - `src/shape.ts`: `fields`/`limit`/`offset`, envelope, truncation, errors
 - `src/coverage.ts`: page to tool map, used by `flowscan_coverage`
-- `src/tools/*.ts`: one file per Flowscan page area, plus shared resolvers (`builderDirectory.ts`, `validators.ts`)
+- `src/tools/*.ts`: one file per Flowscan page area, plus shared resolvers (`builderDirectory.ts`, `validators.ts`); the direct-mode tools are in `explorer.ts`, `markets.ts` and `accountDirect.ts`, registered by `direct.ts`
 - `test/`: offline unit tests (`npm test`)
 - `scripts/smoke.ts`: live smoke test that calls every tool
 - `scripts/qa/`: live agent-style scenario harness (see `scripts/qa/README.md`)

@@ -59,3 +59,11 @@ test("deterministic upstream 500 ('Check your request body') is not retried", as
   await assert.rejects(get("/api/test-500-body"), (err: unknown) => err instanceof FlowscanError && err.status === 500 && !err.retryable);
   assert.equal(m.calls.length, 1);
 });
+
+test("routes that would change the host are refused before any request", async () => {
+  const m = mockFetch([{ status: 200, body: { ok: true } }]);
+  for (const route of ["@evil.com/api/x", ".evil.com/api/x", ":8443/api/x"]) {
+    await assert.rejects(get(route), (err: unknown) => err instanceof FlowscanError && /Refusing|malformed/.test(err.message), route);
+  }
+  assert.equal(m.calls.length, 0);
+});

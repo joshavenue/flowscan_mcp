@@ -8,6 +8,13 @@
  *   npx tsx scripts/qa/scenarios.ts                 # all scenarios
  *   npx tsx scripts/qa/scenarios.ts --only 1,5,26   # a subset
  *   npx tsx scripts/qa/scenarios.ts --json out.json # also write machine-readable results
+ *   npx tsx scripts/qa/scenarios.ts --upstream      # hyperliquid-direct scenarios (101+): the server is
+ *                                                   # spawned with FLOWSCAN_HYPERLIQUID_DIRECT=1
+ *
+ * The default run spawns the server with FLOWSCAN_HYPERLIQUID_DIRECT unset (even if
+ * your shell sets it) and fails if any host other than www.flowscan.xyz is
+ * contacted. The --upstream run allows exactly www.flowscan.xyz plus
+ * api.hyperliquid.xyz, rpc.hyperliquid.xyz, api-ui.hyperliquid.xyz, api.hyperunit.xyz.
  *
  * Each check is either MUST (correctness; failing one makes the run exit 1) or
  * SHOULD (agent-usability / output-quality expectation; reported as WARN).
@@ -15,7 +22,7 @@
  * to OK once the build agent lands them.
  */
 import fs from "node:fs";
-import { Harness, raw, sum, type CallResult } from "./lib.js";
+import { Harness, raw, rawUpstream, sum, type CallResult } from "./lib.js";
 
 type Level = "MUST" | "SHOULD";
 interface Check {
@@ -36,6 +43,8 @@ interface Ctx {
 interface Scenario {
   id: number;
   name: string;
+  /** Runs only in the --upstream (hyperliquid-direct) pass. */
+  upstream?: boolean;
   /** Use a fresh server process (cold cache), e.g. for concurrency/timing checks. */
   fresh?: boolean;
   run(c: Ctx): Promise<void>;
@@ -46,6 +55,9 @@ const FOMO_BIG = "0x2a2b6b093a9813fbd8cddae800c3d17d46460d17";
 const FOMO_SMALL_ADDR = "0xb838e4d1c8bcf71fa8e63299d5aa3258c83d6adb";
 const STAKER = "0xa7904a48ffba1c48146d083737a04db369d3b7a0"; // delegates to 3 validators
 const DAY = 86_400_000;
+
+/** State handed from one hyperliquid-direct scenario to the next (#101 -> #102 -> #103). */
+const shared: { height?: number; block?: any } = {};
 
 const near = (a: unknown, b: number, tol = 0.01) => typeof a === "number" && Math.abs(a - b) <= tol;
 const rel = (a: number, b: number) => Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b), 1e-9);
@@ -525,6 +537,164 @@ const scenarios: Scenario[] = [
       c.should("builder_dashboard accepts a builder id/name, not only a 0x address", !dash?.properties?.builder?.pattern, dash?.properties?.builder?.pattern);
     },
   },
+
+  /* ------------------------- hyperliquid-direct (--upstream) ------------------------- */
+  {
+    id: 101,
+    name: "What are the latest blocks? (live feed)",
+    upstream: true,
+    async run(c) {
+      const r = await c.call("flowscan_live_feed", { include: "blocks", seconds: 3, limit: 10 });
+      const d = r.json;
+      const bs = d?.data?.blocks ?? [];
+      c.must("envelope: mode, wss source, homepage shownOn", d?.mode === "hyperliquid-direct" && d?.source === "wss://rpc.hyperliquid.xyz/ws" && d?.shownOn === "https://www.flowscan.xyz/", [d?.mode, d?.source, d?.shownOn]);
+      c.must("10 blocks, newest first, distinct heights", bs.length === 10 && bs.every((b: any, i: number) => i === 0 || bs[i - 1].height > b.height), bs.map((b: any) => b.height));
+      c.must("latest block is < 60 s old", bs[0] && Date.now() - bs[0].blockTime < 60_000, bs[0]?.blockTimeIso);
+      c.must("ISO twins", bs.every((b: any) => b.blockTimeIso === new Date(b.blockTime).toISOString()));
+      c.must("stats present (blocks/sec, median interval)", d?.data?.stats?.blocksPerSec > 1 && d?.data?.stats?.medianBlockIntervalMs > 0, d?.data?.stats);
+      c.must("only the explorer WebSocket was opened", r.fetches.filter((f) => f.kind === "start" && f.group !== "ws").every((f) => f.host === "api.hyperliquid.xyz") && r.fetches.some((f) => f.group === "ws" && f.host === "rpc.hyperliquid.xyz"), r.fetches.map((f) => `${f.group}:${f.host}`));
+      // Ground truth: every listed block matches the raw explorer blockDetails.
+      const raw0 = await rawUpstream("https://rpc.hyperliquid.xyz/explorer", { height: bs[2].height, type: "blockDetails" });
+      const rb = raw0?.blockDetails;
+      c.must("feed block == raw blockDetails (height, blockTime, hash, proposer, numTxs)", rb && ["height", "blockTime", "hash", "proposer", "numTxs"].every((k) => rb[k] === bs[2][k]), { feed: bs[2], raw: rb && { height: rb.height, blockTime: rb.blockTime, hash: rb.hash, proposer: rb.proposer, numTxs: rb.numTxs } });
+      shared.height = bs[3]?.height;
+    },
+  },
+  {
+    id: 102,
+    name: "Block lookup: /block/{height} field-by-field vs raw blockDetails",
+    upstream: true,
+    async run(c) {
+      const height = shared.height ?? (await c.call("flowscan_live_feed", { include: "blocks", seconds: 1, limit: 5 })).json?.data?.blocks?.[3]?.height;
+      const r = await c.call("flowscan_block", { height });
+      const d = r.json?.data;
+      const rb = (await rawUpstream("https://rpc.hyperliquid.xyz/explorer", { height, type: "blockDetails" }))?.blockDetails;
+      c.must("raw block fetched", rb && Array.isArray(rb.txs), rb);
+      c.must("shownOn = Flowscan block page; source = rpc explorer", r.json?.shownOn === `https://www.flowscan.xyz/block/${height}` && r.json?.source === "https://rpc.hyperliquid.xyz/explorer", [r.json?.shownOn, r.json?.source]);
+      c.must("page header fields equal raw: height, blockTime, hash, proposer, numTxs", d && ["height", "blockTime", "hash", "proposer", "numTxs"].every((k) => d[k] === rb[k]), d && { height: d.height, hash: d.hash, proposer: d.proposer, numTxs: d.numTxs });
+      c.must("time ISO twin", d?.blockTimeIso === new Date(rb.blockTime).toISOString());
+      const failed = rb.txs.filter((t: any) => t.error).length;
+      c.must("Failed + Success Rate cards match raw", d?.failed === failed && Math.abs(d?.successRatePct - Math.round(((rb.txs.length - failed) / rb.txs.length) * 1000) / 10) < 1e-9, [d?.failed, failed, d?.successRatePct]);
+      const counts: Record<string, number> = {};
+      for (const t of rb.txs) counts[t.action.type] = (counts[t.action.type] ?? 0) + 1;
+      c.must("Transaction Breakdown matches raw counts per action type", d?.breakdown?.length === Object.keys(counts).length && d.breakdown.every((x: any) => counts[x.type] === x.count), d?.breakdown);
+      c.must("tx table total = raw txs", r.json?.txPaging?.total === rb.txs.length, [r.json?.txPaging?.total, rb.txs.length]);
+      const rows = d?.txs ?? [];
+      c.must("tx table columns (hash, user, type, status, time) match raw, in page order", rows.length === Math.min(50, rb.txs.length) && rows.every((x: any, i: number) => {
+        const t = rb.txs[i];
+        return x.hash === t.hash && x.user === t.user && x.type === t.action.type && x.status === (t.error ? "error" : "success") && (x.error ?? null) === (t.error ?? null) && (x.time === undefined ? t.time === rb.blockTime : x.time === t.time);
+      }), rows.slice(0, 2));
+      c.must("every row has a one-line summary", rows.every((x: any) => typeof x.summary === "string" && x.summary.length > 0));
+      const name = rb.proposer;
+      c.should("proposer named from validatorSummaries", typeof d?.proposerName === "string", name);
+      const errRow = rb.txs.findIndex((t: any) => t.error);
+      if (errRow >= 0) {
+        const er = await c.call("flowscan_block", { height, status: "error", limit: 5 });
+        c.must("status=error filter returns only failed txs with their error text", er.json?.data?.txs?.length > 0 && er.json.data.txs.every((x: any) => x.status === "error" && typeof x.error === "string"), er.json?.data?.txs?.[0]);
+      }
+      shared.block = rb;
+    },
+  },
+  {
+    id: 103,
+    name: "Tx lookup: /tx/{hash} field-by-field vs raw txDetails",
+    upstream: true,
+    async run(c) {
+      const rb = shared.block;
+      c.must("block from #102 available", rb, "run #102 first");
+      if (!rb) return;
+      const picks = [rb.txs.find((t: any) => t.action.type === "order"), rb.txs.find((t: any) => t.action.type.startsWith("cancel")), rb.txs.find((t: any) => t.error)].filter(Boolean);
+      for (const t of picks) {
+        const r = await c.call("flowscan_transaction", { hash: t.hash });
+        const d = r.json?.data;
+        const raw = (await rawUpstream("https://rpc.hyperliquid.xyz/explorer", { hash: t.hash, type: "txDetails" }))?.tx;
+        const tag = `${t.action.type}${t.error ? " (failed)" : ""}`;
+        c.must(`${tag}: raw txDetails fetched`, raw?.hash === t.hash, raw);
+        c.must(`${tag}: hash, block, time, user, error equal raw`, d && d.hash === raw.hash && d.block === raw.block && d.time === raw.time && d.user === raw.user && d.error === (raw.error ?? null), d);
+        c.must(`${tag}: status and ISO time`, d?.status === (raw.error ? "error" : "success") && d?.timeIso === new Date(raw.time).toISOString());
+        c.must(`${tag}: action type and full payload equal raw (no field dropped)`, d?.type === raw.action.type && JSON.stringify(d?.action) === JSON.stringify(raw.action), d?.action);
+        c.must(`${tag}: summary names the action`, typeof d?.summary === "string" && d.summary.length > 0, d?.summary);
+        c.must(`${tag}: shownOn = /tx page, links to block and user`, r.json?.shownOn === `https://www.flowscan.xyz/tx/${t.hash}` && r.json?.links?.block === `https://www.flowscan.xyz/block/${raw.block}`);
+        if (t.action.type === "order") {
+          const o = raw.action.orders[0];
+          c.must("order: side/size/price from the first order", d?.details?.side === (o.b ? "buy" : "sell") && d?.details?.size === o.s && d?.details?.price === o.p, d?.details);
+          c.should("order: asset index resolved to a name", d?.details?.asset && !String(d.details.asset).startsWith("Asset "), d?.details?.asset);
+        }
+      }
+      const nf = await c.call("flowscan_transaction", { hash: `0x${"ab".repeat(32)}` });
+      c.must("unknown hash -> isError 404 'Transaction not found', not retried", nf.isError && /"status":404/.test(nf.text) && /not found/i.test(nf.text) && nf.fetches.filter((f) => f.kind === "start" && f.host === "rpc.hyperliquid.xyz").length === 1, nf.text.slice(0, 200));
+    },
+  },
+  {
+    id: 104,
+    name: "What is the HYPE price?",
+    upstream: true,
+    async run(c) {
+      const r = await c.call("flowscan_prices", { coins: ["HYPE"] });
+      const row = r.json?.data?.[0];
+      const mids = await rawUpstream("https://api.hyperliquid.xyz/info", { type: "allMids" });
+      const ref = Number(mids?.HYPE);
+      c.must("HYPE row with mark, mid, oracle", row?.coin === "HYPE" && row.markPx > 0 && row.midPx > 0 && row.oraclePx > 0, row);
+      c.must("mid within 1% of raw allMids.HYPE", Math.abs(row?.midPx - ref) / ref < 0.01, [row?.midPx, ref]);
+      c.must("source/mode/shownOn", r.json?.source === "https://api.hyperliquid.xyz/info" && r.json?.mode === "hyperliquid-direct" && r.json?.shownOn === "https://www.flowscan.xyz/");
+      c.must("requests are the homepage's (allMids + metaAndAssetCtxs)", JSON.stringify(r.json?.request) === JSON.stringify([{ type: "allMids" }, { type: "metaAndAssetCtxs" }]), r.json?.request);
+      c.must("24h volume, OI and funding present", row?.dayNtlVlm > 0 && row?.openInterestUsd > 0 && typeof row?.fundingHourly === "number", row);
+      const multi = await c.call("flowscan_prices", { coins: ["BTC", "eth", "xyz:TSLA", "KM:US500", "NVDAX"] });
+      const coins = (multi.json?.data ?? []).map((x: any) => x.coin);
+      c.must("BTC/ETH/HIP-3 (incl. display-name alias)/spot token resolve", ["BTC", "ETH", "xyz:TSLA", "mkts:US500", "@702"].every((k) => coins.includes(k)), coins);
+    },
+  },
+  {
+    id: 105,
+    name: "Candles: BTC 1h, last 24 bars, vs raw candleSnapshot",
+    upstream: true,
+    async run(c) {
+      const r = await c.call("flowscan_candles", { coin: "BTC", interval: "1h", bars: 24 });
+      const rows = r.json?.data?.candles ?? [];
+      const req = r.json?.request;
+      c.must("24 candles, oldest first, 1h apart, ISO twins", rows.length === 24 && rows.every((x: any, i: number) => (i === 0 || x.t - rows[i - 1].t === 3_600_000) && x.tIso === new Date(x.t).toISOString()), rows.length);
+      c.must("request window = 24 bars back from endTime", req?.req?.endTime - req?.req?.startTime === 24 * 3_600_000, req);
+      const raw = await rawUpstream("https://api.hyperliquid.xyz/info", req);
+      const byT = new Map((Array.isArray(raw) ? raw : []).map((x: any) => [x.t, x]));
+      const closed = rows.slice(0, -1);
+      c.must("closed candles equal raw o/h/l/c/v/n", closed.length === 23 && closed.every((x: any) => {
+        const y: any = byT.get(x.t);
+        return y && x.o === Number(y.o) && x.h === Number(y.h) && x.l === Number(y.l) && x.c === Number(y.c) && x.v === Number(y.v) && x.n === y.n;
+      }), closed[0]);
+      c.must("summary consistent", r.json?.data?.summary?.high === Math.max(...rows.map((x: any) => x.h)) && r.json?.data?.summary?.close === rows.at(-1)?.c, r.json?.data?.summary);
+    },
+  },
+  {
+    id: 106,
+    name: "Direct mode hygiene: tool list, hosts, upstream concurrency",
+    upstream: true,
+    fresh: true,
+    async run(c) {
+      const tools = await c.h.listTools();
+      const total = tools.reduce((a, t) => a + JSON.stringify(t).length, 0);
+      c.must("58 tools (44 + 14 direct)", tools.length === 58, tools.length);
+      c.info(`direct-mode tool schema: ${total} chars`);
+      const cov = await c.call("flowscan_coverage", { topic: "block" });
+      c.must("coverage serves /block in direct mode", cov.json?.mode === "hyperliquid-direct" && cov.json?.servedByThisServer === true, cov.json?.pages?.map((p: any) => p.path));
+      const before = c.h.fetchLog.length;
+      const res = await Promise.all([
+        c.call("flowscan_prices", { dex: "xyz", limit: 3 }),
+        c.call("flowscan_spot_tokens", { limit: 3 }),
+        c.call("flowscan_perp_dexs", {}),
+        c.call("flowscan_validator_summaries", { limit: 3 }),
+        c.call("flowscan_borrow_lend_reserves", {}),
+        c.call("flowscan_address_portfolio", { address: VAULT, maxPoints: 10 }),
+        c.call("flowscan_address_evm_balance", { address: VAULT }),
+        c.call("flowscan_address_unit_operations", { address: VAULT }),
+      ]);
+      const log = c.h.fetchLog.slice(before).filter((f) => f.kind === "start" && f.group === "upstream");
+      const maxIn = Math.max(0, ...log.map((f) => f.inflight));
+      c.must("all 8 parallel direct calls succeed", res.every((x) => !x.isError), res.filter((x) => x.isError).map((x) => x.text.slice(0, 120)));
+      c.must("upstream concurrency <= 2", maxIn <= 2, maxIn);
+      c.must("every result has source, shownOn, mode", res.every((x) => x.json?.source && x.json?.shownOn?.startsWith("https://www.flowscan.xyz/") && x.json?.mode === "hyperliquid-direct"));
+      c.info(`${log.length} upstream HTTP requests, max ${maxIn} in flight`);
+    },
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -536,15 +706,21 @@ async function main(): Promise<void> {
   const jsonIdx = argv.indexOf("--json");
   const jsonOut = jsonIdx >= 0 ? argv[jsonIdx + 1] : null;
 
-  const shared = new Harness();
-  await shared.start();
+  const upstreamRun = argv.includes("--upstream");
+  // Strict run: force the switch off even if the caller's shell sets it. Upstream run: force it on.
+  const serverEnv = { FLOWSCAN_HYPERLIQUID_DIRECT: upstreamRun ? "1" : "" };
+  const allowedHosts = new Set(["www.flowscan.xyz", ...(upstreamRun ? ["api.hyperliquid.xyz", "rpc.hyperliquid.xyz", "api-ui.hyperliquid.xyz", "api.hyperunit.xyz"] : [])]);
+
+  const sharedHarness = new Harness();
+  await sharedHarness.start(serverEnv);
   const results: Array<{ id: number; name: string; ms: number; calls: number; chars: number; checks: Check[]; hosts: string[]; notes: string[] }> = [];
   const allHosts = new Set<string>();
 
   for (const s of scenarios) {
     if (only && !only.has(s.id)) continue;
-    const h = s.fresh ? new Harness() : shared;
-    if (s.fresh) await h.start();
+    if (Boolean(s.upstream) !== upstreamRun) continue;
+    const h = s.fresh ? new Harness() : sharedHarness;
+    if (s.fresh) await h.start(serverEnv);
     const notes: string[] = [];
     const ctx: Ctx = {
       h,
@@ -587,10 +763,10 @@ async function main(): Promise<void> {
     for (const n of notes) console.log(`  [ info ] ${n}`);
     for (const r of ctx.calls) console.log(`      call ${r.tool} ${JSON.stringify(r.args).slice(0, 140)} -> ${r.isError ? "ERROR " : ""}${r.chars} chars, ${r.ms} ms${r.truncated ? ", TRUNCATED" : ""}`);
   }
-  await shared.stop();
+  await sharedHarness.stop();
 
-  const foreign = [...allHosts].filter((x) => x !== "www.flowscan.xyz");
-  console.log(`\nOutbound hosts seen: ${[...allHosts].join(", ") || "(none)"}${foreign.length ? `  <-- FOREIGN HOSTS: ${foreign.join(", ")}` : ""}`);
+  const foreign = [...allHosts].filter((x) => !allowedHosts.has(x));
+  console.log(`\nMode: ${upstreamRun ? "hyperliquid-direct (--upstream)" : "strict"}. Outbound hosts seen: ${[...allHosts].join(", ") || "(none)"}${foreign.length ? `  <-- FOREIGN HOSTS: ${foreign.join(", ")}` : ""}`);
   const mustFails = results.flatMap((r) => r.checks.filter((k) => k.level === "MUST" && !k.ok).map((k) => `#${r.id} ${k.name}`));
   const warns = results.flatMap((r) => r.checks.filter((k) => k.level === "SHOULD" && !k.ok).map((k) => `#${r.id} ${k.name}`));
   console.log(`\nSummary: ${results.length} scenarios, ${mustFails.length} MUST failures, ${warns.length} SHOULD warnings.`);

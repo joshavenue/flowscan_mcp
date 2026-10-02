@@ -1,7 +1,9 @@
 /**
  * Shared QA helpers: spawn the MCP server from source (npx tsx src/index.ts)
- * with a fetch spy preloaded, call tools, and fetch raw Flowscan routes for
- * ground truth.
+ * with a fetch/WebSocket spy preloaded, call tools, and fetch raw Flowscan
+ * routes (and, for the hyperliquid-direct scenarios, the raw upstream
+ * endpoints) for ground truth. Ground-truth requests are made by this QA
+ * process, not by the server, so they never show up in the server's host log.
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -12,7 +14,7 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 export const BASE = "https://www.flowscan.xyz";
 export const TRUNC_MARKER = "[TRUNCATED:";
 
-export type FetchLog = { host: string; inflight: number; max: number; url: string; status?: number; ms?: number; kind: "start" | "end" | "fail" };
+export type FetchLog = { host: string; inflight: number; max: number; url: string; status?: number; ms?: number; kind: "start" | "end" | "fail"; group?: string };
 
 export interface CallResult {
   tool: string;
@@ -47,7 +49,8 @@ export class Harness {
       this.stderrTail = (this.stderrTail + s).slice(-20_000);
       for (const line of s.split("\n")) {
         const m = line.match(/^\[qa-fetch\] (start|end|fail) host=(\S+)(?: inflight=(\d+) max=(\d+))?.*?(?:status=(\d+))?(?: ms=(\d+))?.*?url=(\S*)?/);
-        if (m) this.fetchLog.push({ kind: m[1] as FetchLog["kind"], host: m[2], inflight: Number(m[3] ?? 0), max: Number(m[4] ?? 0), status: m[5] ? Number(m[5]) : undefined, ms: m[6] ? Number(m[6]) : undefined, url: m[7] ?? "" });
+        const g = line.match(/ group=(\S+)/);
+        if (m) this.fetchLog.push({ kind: m[1] as FetchLog["kind"], host: m[2], inflight: Number(m[3] ?? 0), max: Number(m[4] ?? 0), status: m[5] ? Number(m[5]) : undefined, ms: m[6] ? Number(m[6]) : undefined, url: m[7] ?? "", group: g?.[1] });
       }
     });
     this.client = new Client({ name: "flowscan-qa", version: "0.0.1" });
@@ -108,3 +111,14 @@ export const daysAgo = (n: number) => {
   return ymd(d);
 };
 export const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
+/** Ground truth for hyperliquid-direct scenarios: POST to an upstream endpoint from the QA process. */
+export async function rawUpstream(url: string, body: unknown): Promise<any> {
+  const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) });
+  const t = await res.text();
+  try {
+    return JSON.parse(t);
+  } catch {
+    return t;
+  }
+}
