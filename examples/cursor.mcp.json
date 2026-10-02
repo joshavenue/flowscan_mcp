@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "flowscan": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "github:joshavenue/flowscan_mcp"]
+    }
+  }
+}

@@ -80,7 +80,7 @@ export function registerHip4Tools(server: McpServer): void {
       description:
         "The /hip-4 page: HIP-4 prediction markets. section='active' (default): slim rows (outcomeId, name, marketType, asset ids, underlying/target/expiry, yesMark/noMark = implied probability, yesChange24h, volume24h, totalVolume, deployer, question) sorted by sortBy (default volume24h desc). 'settled': resolved outcomes with settleFraction and trade stats. 'questions': question groups. 'all': all three. full=true for descriptions. Candles: flowscan_hip4_outcome.",
       inputSchema: {
-        section: z.enum(["active", "settled", "questions", "all"]).optional(),
+        section: z.enum(["active", "settled", "questions", "all"]).optional().describe("Default active."),
         search: z.string().optional().describe("Substring over name, description, category, underlying, type, deployer, question (e.g. 'Premier League')."),
         category: z.string().optional().describe("Category substring (e.g. 'NFL')."),
         settledLimit: z.number().int().min(1).max(1000).optional().describe("Settled outcomes to fetch (default 100)."),
@@ -126,7 +126,7 @@ export function registerHip4Tools(server: McpServer): void {
       description:
         "HIP-4 page outcome drill-down: candles for the YES and NO assets of one outcome over the last N days (compact rows [openTime ms, open, high, low, close, volume, trades]), plus per-side trade stats and, for settled outcomes (settled=true), the settled outcome record. Settled outcomes typically have no candles. Only outcomeId is required (asset ids default to '#<outcomeId>0' YES / '#<outcomeId>1' NO). Get outcomeId from flowscan_hip4_markets.",
       inputSchema: {
-        outcomeId: z.number().int(),
+        outcomeId: z.number().int().describe("Outcome id from flowscan_hip4_markets."),
         yesAssetId: z.string().optional().describe("Default '#<outcomeId>0' (e.g. '#14730'); a missing '#' is added."),
         noAssetId: z.string().optional().describe("Default '#<outcomeId>1' (e.g. '#14731'); a missing '#' is added."),
         interval: z.enum(["1m", "5m", "15m", "1h", "4h", "1d"]).optional().describe("Candle interval (default '1h', as the site uses)."),

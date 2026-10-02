@@ -1,0 +1,20 @@
+# Codex (CLI, IDE extension, and the Codex surface of the ChatGPT desktop app).
+# Put this in ~/.codex/config.toml, or in .codex/config.toml inside a trusted project.
+# Docs: https://learn.chatgpt.com/docs/extend/mcp?surface=cli
+
+[mcp_servers.flowscan]
+command = "npx"
+args = ["-y", "github:joshavenue/flowscan_mcp"]
+# The first npx run clones and builds the package; Codex's default startup timeout is 10 s.
+startup_timeout_sec = 120
+# Flowscan requests can take up to 45 s; Codex's default tool timeout is 60 s.
+tool_timeout_sec = 120
+
+# Opt-in Hyperliquid-direct mode (58 tools instead of 44). Uncomment to enable:
+# [mcp_servers.flowscan.env]
+# FLOWSCAN_HYPERLIQUID_DIRECT = "1"
+
+# Remote alternative: run `npx -y github:joshavenue/flowscan_mcp --http` (or the Docker image)
+# and use a URL instead of a command. Do not enable both blocks at once.
+# [mcp_servers.flowscan]
+# url = "http://127.0.0.1:8787/mcp"

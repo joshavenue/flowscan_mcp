@@ -1,0 +1,17 @@
+# Continue: save as .continue/mcpServers/flowscan.yaml in your workspace,
+# or copy the mcpServers entry into your config.yaml.
+# MCP tools are only used in Continue's agent mode.
+# Docs: https://docs.continue.dev/customize/deep-dives/mcp and https://docs.continue.dev/reference
+name: Flowscan MCP
+version: 0.0.1
+schema: v1
+mcpServers:
+  - name: flowscan
+    type: stdio
+    command: npx
+    args:
+      - "-y"
+      - "github:joshavenue/flowscan_mcp"
+    # Opt-in Hyperliquid-direct mode:
+    # env:
+    #   FLOWSCAN_HYPERLIQUID_DIRECT: "1"

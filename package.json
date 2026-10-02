@@ -17,10 +17,15 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node -e \"require('fs').chmodSync('dist/index.js',0o755)\"",
+    "guide": "node scripts/gen-guide.mjs",
+    "build": "node scripts/gen-guide.mjs --check && tsc -p tsconfig.json && node -e \"require('fs').chmodSync('dist/index.js',0o755)\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "start:http": "node dist/index.js --http",
     "smoke": "tsx scripts/smoke.ts",
+    "conformance": "tsx scripts/conformance.ts",
+    "clients": "tsx scripts/clients/run-all.ts",
     "prepare": "npm run build",
     "test": "tsx --test test/*.test.ts"
   },
@@ -30,6 +35,8 @@
   },
   "devDependencies": {
     "@types/node": "^22",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "tsx": "^4.23.15",
     "typescript": "^5.9"
   }

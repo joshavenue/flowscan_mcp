@@ -5,7 +5,11 @@ An MCP server that exposes the data shown on [flowscan.xyz](https://www.flowscan
 - 44 read-only tools, grouped by Flowscan page; 58 with the opt-in [Hyperliquid-direct mode](#two-modes)
 - Hyperliquid mainnet only (Flowscan has no testnet mode)
 - No API key
-- stdio transport, Node.js 20 or newer (22 or newer for the three WebSocket tools of direct mode)
+- stdio transport by default, Streamable HTTP with `--http` ([Remote (HTTP) and Docker](#remote-http-and-docker)); Node.js 20 or newer (22 or newer for the three WebSocket tools of direct mode)
+
+## Works with any MCP client
+
+Nothing here is specific to one vendor. Any client that speaks the Model Context Protocol can use the server: Claude Desktop and Claude Code, OpenAI Codex and ChatGPT, Cursor, VS Code with GitHub Copilot, Gemini CLI, Zed, Cline, Continue, Grok, Hermes Agent, and agent frameworks such as the OpenAI Agents SDK, LangChain and the Vercel AI SDK. Local clients start it over stdio; cloud clients reach it over Streamable HTTP. Tool schemas are listed in a portable subset of JSON Schema (no `$schema`, no `const`, no exclusive bounds), which suits model APIs with strict schema rules such as Gemini and OpenAI function calling. For clients that cannot load Claude skills, the server also serves its tool-selection guide as the MCP prompt `flowscan_guide` and the resource `flowscan://guide`, and the same rules are in [AGENTS.md](AGENTS.md). Setup for each client: [Client configuration](#client-configuration) and [docs/clients.md](docs/clients.md).
 
 ## Two modes
 
@@ -78,24 +82,13 @@ npx @modelcontextprotocol/inspector node dist/index.js
 
 ## Client configuration
 
+The snippets below cover the most common clients. [docs/clients.md](docs/clients.md) has the full matrix: Codex, ChatGPT, the OpenAI Responses API and Agents SDK, Cursor, VS Code, Devin Desktop (formerly Windsurf), Cline, Roo Code, Continue, Zed, JetBrains AI Assistant, Gemini CLI, Gemini Code Assist, Antigravity, Grok, Hermes Agent, LangChain, the Vercel AI SDK and others, each with the vendor documentation it was checked against and whether the client can use the `flowscan_guide` prompt. Ready-to-copy config files are in [examples/](examples/).
+
+Each snippet uses npx from GitHub. With a local clone, use `"command": "node"` and `"args": ["/absolute/path/to/flowscan_mcp/dist/index.js"]` instead. After the npm release, the args become `["-y", "flowscan-mcp"]`.
+
 ### Claude Desktop
 
-Edit `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows: `%APPDATA%\Claude\claude_desktop_config.json`) and restart Claude Desktop.
-
-Using a local clone (same as [examples/claude_desktop_config.json](examples/claude_desktop_config.json)):
-
-```json
-{
-  "mcpServers": {
-    "flowscan": {
-      "command": "node",
-      "args": ["/absolute/path/to/flowscan_mcp/dist/index.js"]
-    }
-  }
-}
-```
-
-Using npx from GitHub:
+Edit `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows: `%APPDATA%\Claude\claude_desktop_config.json`) and restart Claude Desktop. See [examples/claude_desktop_config.json](examples/claude_desktop_config.json) for the local-clone form.
 
 ```json
 {
@@ -108,47 +101,23 @@ Using npx from GitHub:
 }
 ```
 
-After the npm release, the args become `["-y", "flowscan-mcp"]`.
-
 ### Claude Code
-
-Add it from the command line:
 
 ```sh
 claude mcp add flowscan -- npx -y github:joshavenue/flowscan_mcp
 ```
 
-or, from a local clone:
-
-```sh
-claude mcp add flowscan -- node /absolute/path/to/flowscan_mcp/dist/index.js
-```
-
-To share it with a project, commit a `.mcp.json` at the project root (same as [examples/mcp.json](examples/mcp.json)):
-
-```json
-{
-  "mcpServers": {
-    "flowscan": {
-      "command": "node",
-      "args": ["/absolute/path/to/flowscan_mcp/dist/index.js"]
-    }
-  }
-}
-```
-
-For a portable project file, use `"command": "npx"` and `"args": ["-y", "github:joshavenue/flowscan_mcp"]` instead.
-
-In Claude Code the tools show up as `mcp__flowscan__<tool name>`, for example `mcp__flowscan__flowscan_revenue_summary`.
+To share it with a project, commit a `.mcp.json` at the project root with the same `mcpServers` object as above (see [examples/mcp.json](examples/mcp.json)). In Claude Code the tools show up as `mcp__flowscan__<tool name>`, for example `mcp__flowscan__flowscan_revenue_summary`.
 
 ### Cursor
 
-Cursor reads `.cursor/mcp.json` in the project (or `~/.cursor/mcp.json` for all projects). The shape is the same `mcpServers` object as above:
+`.cursor/mcp.json` in the project, or `~/.cursor/mcp.json` for all projects ([examples/cursor.mcp.json](examples/cursor.mcp.json)):
 
 ```json
 {
   "mcpServers": {
     "flowscan": {
+      "type": "stdio",
       "command": "npx",
       "args": ["-y", "github:joshavenue/flowscan_mcp"]
     }
@@ -156,33 +125,117 @@ Cursor reads `.cursor/mcp.json` in the project (or `~/.cursor/mcp.json` for all 
 }
 ```
 
+Cursor users have reported a cap of 40 MCP tools across all servers; strict mode has 44. If you hit it, see [Limiting the tool list](docs/clients.md#limiting-the-tool-list).
+
+### Codex
+
+`~/.codex/config.toml` (shared by the Codex CLI and IDE extension; [examples/codex.config.toml](examples/codex.config.toml)):
+
+```toml
+[mcp_servers.flowscan]
+command = "npx"
+args = ["-y", "github:joshavenue/flowscan_mcp"]
+startup_timeout_sec = 120
+tool_timeout_sec = 120
+```
+
+Codex's default startup timeout (10 s) is too short for the first npx build, hence `startup_timeout_sec`. Codex reads `AGENTS.md`; this repository's [AGENTS.md](AGENTS.md) is ready to copy into your project.
+
+### VS Code (GitHub Copilot)
+
+`.vscode/mcp.json` in the workspace. Note the top-level key is `servers` ([examples/vscode.mcp.json](examples/vscode.mcp.json)):
+
+```json
+{
+  "servers": {
+    "flowscan": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "github:joshavenue/flowscan_mcp"]
+    }
+  }
+}
+```
+
+### Gemini CLI
+
+```sh
+gemini mcp add --scope user flowscan npx -- -y github:joshavenue/flowscan_mcp
+```
+
+or the same `mcpServers` object as Claude Desktop in `~/.gemini/settings.json` ([examples/gemini.settings.json](examples/gemini.settings.json)). Gemini CLI reads `GEMINI.md`, not `AGENTS.md`; this repository's [GEMINI.md](GEMINI.md) imports AGENTS.md.
+
 ### Passing environment variables
 
-Any client config above accepts an `env` object. To turn on [Hyperliquid-direct mode](#two-modes):
+Every stdio config accepts an `env` object. To turn on [Hyperliquid-direct mode](#two-modes):
 
 ```json
 {
   "mcpServers": {
     "flowscan": {
-      "command": "node",
-      "args": ["/absolute/path/to/flowscan_mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "github:joshavenue/flowscan_mcp"],
       "env": { "FLOWSCAN_HYPERLIQUID_DIRECT": "1" }
     }
   }
 }
 ```
 
-The same block works in `claude_desktop_config.json`, a project `.mcp.json` and `.cursor/mcp.json`; see [examples/claude_desktop_config.direct.json](examples/claude_desktop_config.direct.json) and [examples/mcp.direct.json](examples/mcp.direct.json). With the Claude Code CLI:
+See [examples/claude_desktop_config.direct.json](examples/claude_desktop_config.direct.json) and [examples/mcp.direct.json](examples/mcp.direct.json). In Codex the block is `[mcp_servers.flowscan.env]`; in VS Code it is the same `env` object under `servers`. With the CLIs:
 
 ```sh
 claude mcp add flowscan -e FLOWSCAN_HYPERLIQUID_DIRECT=1 -- npx -y github:joshavenue/flowscan_mcp
+codex mcp add flowscan --env FLOWSCAN_HYPERLIQUID_DIRECT=1 -- npx -y github:joshavenue/flowscan_mcp
 ```
 
 Other variables (see [Environment variables](#environment-variables)) go in the same `env` object, for example `"FLOWSCAN_MAX_RESULT_CHARS": "30000"`. Restart the client after changing them; the mode is fixed when the server starts.
 
-### Agent skill
+### Remote (HTTP) and Docker
 
-[skills/flowscan/SKILL.md](skills/flowscan/SKILL.md) is an optional agent skill that tells a model which tool to use for common questions. For Claude Code, copy the folder to `~/.claude/skills/flowscan` (or `.claude/skills/flowscan` inside a project).
+Clients that connect to a URL instead of starting a process (ChatGPT, the OpenAI Responses API, Grok, Claude custom connectors, or any client you prefer to run against a shared server) use the Streamable HTTP transport:
+
+```sh
+npx -y github:joshavenue/flowscan_mcp --http     # MCP endpoint: http://127.0.0.1:8787/mcp
+curl http://127.0.0.1:8787/healthz                # {"ok":true,"mode":"strict","tools":44,...}
+```
+
+`--port <n>` and `--host <addr>` (or `PORT`, `HOST`, `FLOWSCAN_MCP_TRANSPORT=http`) change the defaults. The server is stateless by default (`--stateful` keeps `Mcp-Session-Id` sessions) and also serves the legacy HTTP+SSE transport on `/sse` for older clients. It has no authentication: it binds `127.0.0.1` and accepts only local `Host` headers unless `FLOWSCAN_MCP_ALLOWED_HOSTS` names more, and refuses browser origins not listed in `FLOWSCAN_MCP_CORS`.
+
+Pointing a local client at it, for example:
+
+```sh
+claude mcp add --transport http flowscan http://127.0.0.1:8787/mcp
+```
+
+```toml
+# ~/.codex/config.toml
+[mcp_servers.flowscan]
+url = "http://127.0.0.1:8787/mcp"
+```
+
+```json
+{ "mcpServers": { "flowscan": { "url": "http://127.0.0.1:8787/mcp" } } }
+```
+
+(the last one is Cursor's `.cursor/mcp.json`; VS Code uses `{"servers": {"flowscan": {"type": "http", "url": ...}}}` and Gemini CLI uses `httpUrl`).
+
+Docker (no published image yet; build from a clone):
+
+```sh
+docker build -t flowscan-mcp .
+docker run --rm -p 127.0.0.1:8787:8787 flowscan-mcp
+docker run --rm -p 127.0.0.1:8787:8787 -e FLOWSCAN_HYPERLIQUID_DIRECT=1 flowscan-mcp
+```
+
+ChatGPT, the Responses API, grok.com and the xAI API call the server from their own infrastructure, so they need a public HTTPS URL: the container behind a reverse proxy with TLS, or a tunnel to your machine (set `FLOWSCAN_MCP_ALLOWED_HOSTS` to the public hostname in both cases). Details, including which tunnels work: [docs/clients.md](docs/clients.md#running-over-http).
+
+### Agent guidance (skill, prompt, AGENTS.md)
+
+The server is most accurate when the model also has the tool-selection rules (which tool fits a question, mainnet only, quote the computed totals, how to say something is not served). They come in three forms with the same content:
+
+- [skills/flowscan/SKILL.md](skills/flowscan/SKILL.md), an agent skill. For Claude Code, copy the folder to `~/.claude/skills/flowscan` (or `.claude/skills/flowscan` inside a project).
+- The MCP prompt `flowscan_guide` and the resource `flowscan://guide`, served by the server itself, for clients that support MCP prompts or resources (Claude Code: `/mcp__flowscan__flowscan_guide`). `flowscan://coverage` serves the coverage map as JSON.
+- [AGENTS.md](AGENTS.md), a shortened copy for clients that read `AGENTS.md` (Codex, Cursor, VS Code, Zed, Hermes Agent and others). [docs/clients.md](docs/clients.md#guidance-for-non-claude-agents) lists the rules file each client reads.
 
 ## Tools
 

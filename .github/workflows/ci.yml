@@ -27,6 +27,8 @@ jobs:
       - run: npm run build
       - name: Unit tests (offline)
         run: npm test
+      - name: Tool schema conformance (offline)
+        run: npm run conformance
 
   # Live tests against www.flowscan.xyz. They depend on the site and its
   # undocumented routes, so they only run when started by hand from the

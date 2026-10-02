@@ -124,7 +124,7 @@ export function registerAccountDirectTools(server: McpServer): void {
         "The /address page 'Unit' table (api.hyperunit.xyz): bridge operations between Hyperliquid and Bitcoin/Ethereum/Solana, newest first: created time, asset, from/to chain, direction, amount (Flowscan's decimals), USD value at current prices, state, tx hashes and addresses. Totals by direction and asset.",
       inputSchema: {
         address: ETH_ADDRESS,
-        direction: z.enum(["deposit", "withdrawal"]).optional(),
+        direction: z.enum(["deposit", "withdrawal"]).optional().describe("Only deposits or only withdrawals."),
         ...shapeInput,
       },
     },

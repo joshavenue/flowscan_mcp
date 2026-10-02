@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "flowscan": {
+      "command": "npx",
+      "args": ["-y", "github:joshavenue/flowscan_mcp"],
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}

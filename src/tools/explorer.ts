@@ -51,7 +51,7 @@ export function registerExplorerTools(server: McpServer): void {
       inputSchema: {
         height: z.number().int().min(1).describe("Block height."),
         type: z.string().optional().describe("Only txs with this action type (e.g. 'order', 'cancel')."),
-        status: z.enum(["success", "error"]).optional(),
+        status: z.enum(["success", "error"]).optional().describe("Only successful or only failed txs."),
         user: z.string().optional().describe("Only txs from this address."),
         includeAction: z.boolean().optional().describe("Add each tx's raw action (large)."),
         ...shapeInput,

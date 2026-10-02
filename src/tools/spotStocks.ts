@@ -22,7 +22,7 @@ export function registerSpotStockTools(server: McpServer): void {
       description:
         "The /spot-stocks page: tokenized stocks on Hyperliquid SPOT: NVDAX, SPYX, QQQX, SKHYX, MUX, SNDKX, SPCXX, TSLAX, AAPLX, CRCLX (xStocks) and SPCXD (Dinari). Per-token price, 24h/all-time volume, holders and liquidity ARE served. section='current' (default): summary + per-token stats. 'timeseries': daily volume/holders/traders/value per token (30 days default). 'liquidity': cumulative depth within 2/5/10/25 bps in tokens and USD. 'topHolders': largest holders.",
       inputSchema: {
-        section: z.enum(["current", "timeseries", "liquidity", "topHolders"]).optional(),
+        section: z.enum(["current", "timeseries", "liquidity", "topHolders"]).optional().describe("Default current."),
         token: z.string().optional().describe("Token/underlying substring ('NVDA')."),
         days: z.number().int().min(1).max(400).optional().describe("timeseries: last N days (default 30). liquidity: history days (default 1 with token)."),
         ...shapeInput,

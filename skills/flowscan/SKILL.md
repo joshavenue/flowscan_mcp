@@ -164,3 +164,5 @@ cp -r skills/flowscan ~/.claude/skills/
 ```
 
 The skill only helps if the `flowscan` MCP server is also configured; see the README for client setup.
+
+For other MCP clients (Codex, Cursor, VS Code, Gemini CLI, ...), the server serves this same text as the MCP prompt `flowscan_guide` and the resource `flowscan://guide`. If a client supports neither, copy this file's body into the client's rules file (for Codex and most others, `AGENTS.md`); see `docs/clients.md`.

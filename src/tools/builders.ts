@@ -508,7 +508,7 @@ export function registerBuilderTools(server: McpServer): void {
       description:
         "The /builder-intelligence index: ~120 analysed builders (id, name, category, total/active users, all-time revenue/volume USD, 7d new users) and categories. Ids feed flowscan_builder_intelligence_detail, category ids flowscan_builder_intelligence_summary. Prefer this for user-status/retention questions. Its '7d new users' comes from a different dataset than the leaderboard's and user_series'; say which you quote.",
       inputSchema: {
-        search: z.string().optional(),
+        search: z.string().optional().describe("Builder id/name substring."),
         category: z.string().optional().describe("Filter by category id/name substring."),
         sortBy: z.enum(["total_revenue", "total_users", "active_users", "7d_new_users", "total_volume"]).optional().describe("Default total_revenue desc."),
         includeCategories: z.boolean().optional().describe("Also return the categories list (default true)."),
@@ -536,9 +536,9 @@ export function registerBuilderTools(server: McpServer): void {
         "A /builder-intelligence builder report: user status (active/dormant/cooling-off/switched/moved-on), revenue, cohorts, lifecycle, retention, daily activity, top users, heatmap, daily revenue. Payload is ~11 MB, so pick `sections` (default metadata, key_metrics, user_status_metrics, revenue_metrics). Long lists are paged with limit/offset (50 top-level, 20 nested) and address lists become {count, sample}.",
       inputSchema: {
         builderId: z.string().describe("Builder id from flowscan_builder_intelligence_list (e.g. 'phantom', 'pvp')."),
-        sections: z.array(z.enum(INTEL_SECTIONS)).optional(),
-        startDate: DATE_YMD.optional(),
-        endDate: DATE_YMD.optional(),
+        sections: z.array(z.enum(INTEL_SECTIONS)).optional().describe("Report sections to return (default metadata, key_metrics, user_status_metrics, revenue_metrics)."),
+        startDate: DATE_YMD.optional().describe("YYYY-MM-DD UTC, inclusive."),
+        endDate: DATE_YMD.optional().describe("YYYY-MM-DD UTC, inclusive."),
         ...shapeInput,
       },
     },
@@ -583,8 +583,8 @@ export function registerBuilderTools(server: McpServer): void {
         "The /builder-intelligence aggregate view for a category (e.g. wallet, copytrading, desktop_trading, mobile_trading) or 'overall': metadata (builders included and their weights), totals (users, active users, 7d new users, all-time revenue, fees 24h/7d/30d/90d, average daily revenue, week-1/4 retention) and user-weighted averages (key metrics, user status, revenue by status, lifecycle, retention, equity/fee cohorts). Cohort member address lists are reduced to {count, sample}.",
       inputSchema: {
         category: z.string().optional().describe("Category id from flowscan_builder_intelligence_list, or 'overall' (default)."),
-        startDate: DATE_YMD.optional(),
-        endDate: DATE_YMD.optional(),
+        startDate: DATE_YMD.optional().describe("YYYY-MM-DD UTC, inclusive."),
+        endDate: DATE_YMD.optional().describe("YYYY-MM-DD UTC, inclusive."),
         includeExcludedBuilders: z.boolean().optional().describe("Keep metadata.builders_excluded (can be >1000 entries; default false)."),
         fields: shapeInput.fields,
       },

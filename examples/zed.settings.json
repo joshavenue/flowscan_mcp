@@ -1,0 +1,9 @@
+{
+  "context_servers": {
+    "flowscan": {
+      "command": "npx",
+      "args": ["-y", "github:joshavenue/flowscan_mcp"],
+      "env": {}
+    }
+  }
+}

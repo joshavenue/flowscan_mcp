@@ -107,7 +107,7 @@ export function registerMarketTools(server: McpServer): void {
         coins: z.array(z.string()).max(50).optional().describe("Coins to quote."),
         dex: z.string().optional().describe("HIP-3 dex for the top list (prefix or name; default main)."),
         sortBy: z.enum(["volume", "openInterest", "change", "funding"]).optional().describe("Top list order (default volume)."),
-        includeDelisted: z.boolean().optional(),
+        includeDelisted: z.boolean().optional().describe("Include delisted markets (default false)."),
         ...shapeInput,
       },
     },
@@ -174,7 +174,7 @@ export function registerMarketTools(server: McpServer): void {
       description:
         "Price candles as on the address page position chart (candleSnapshot): rows {t, tIso, o, h, l, c, v, n} oldest first, plus open/close/high/low/change/volume summary. coin: perp (BTC), HIP-3 (xyz:TSLA), spot pair (@107) or spot token (NVDAX). Window = `bars` intervals back from endTime (default now) unless startTime is given.",
       inputSchema: {
-        coin: z.string().min(1),
+        coin: z.string().min(1).describe("Coin: BTC, xyz:TSLA, @107 or NVDAX."),
         interval: z.enum(CANDLE_INTERVALS).optional().describe("Default 1h."),
         bars: z.number().int().min(1).max(500).optional().describe("Default 100, max 500 (most recent kept)."),
         startTime: z.number().int().optional().describe("ms epoch."),
@@ -227,10 +227,10 @@ export function registerMarketTools(server: McpServer): void {
       description:
         "One L2 order book snapshot from the Hyperliquid WebSocket l2Book subscription (what /hip-4 streams for outcome coins): top bids/asks with size, order count, cumulative size and USD, best bid/ask, mid, spread (bps). coin: BTC, xyz:TSLA, @107, NVDAX or an outcome side like #14730. nSigFigs (2-5) aggregates levels.",
       inputSchema: {
-        coin: z.string().min(1),
+        coin: z.string().min(1).describe("Coin: BTC, xyz:TSLA, @107, NVDAX or an outcome side like #14730."),
         depth: z.number().int().min(1).max(20).optional().describe("Levels per side (default 10)."),
-        nSigFigs: z.number().int().min(2).max(5).optional(),
-        mantissa: z.union([z.literal(1), z.literal(2), z.literal(5)]).optional().describe("Only with nSigFigs=5."),
+        nSigFigs: z.number().int().min(2).max(5).optional().describe("Aggregate price levels to 2-5 significant figures."),
+        mantissa: z.literal([1, 2, 5]).optional().describe("Only with nSigFigs=5."),
       },
     },
     async (args) => {
@@ -283,7 +283,7 @@ export function registerMarketTools(server: McpServer): void {
       description:
         "Most recent trades for a coin from the Hyperliquid WebSocket trades subscription (what /hip-4 streams for outcome coins; Hyperliquid sends the last 30): time, side (buy = taker bought), price, size, USD notional, hash, buyer, seller, plus buy/sell volume and VWAP. coin: BTC, xyz:TSLA, @107, NVDAX, #14730.",
       inputSchema: {
-        coin: z.string().min(1),
+        coin: z.string().min(1).describe("Coin: BTC, xyz:TSLA, @107, NVDAX or #14730."),
         limit: z.number().int().min(1).max(30).optional().describe("Default 30 (upstream sends 30)."),
         fields: shapeInput.fields,
       },
@@ -323,7 +323,7 @@ export function registerMarketTools(server: McpServer): void {
       description:
         "Hyperliquid spot directory from spotMetaAndAssetCtxs (used by the address page to name and value spot balances): per pair the pair id ('@702'), base/quote token names, token index, decimals, mark/mid, 24h change and volume, circulating/total supply, market cap. Maps '@702' -> NVDAX. search matches token name, full name, pair id or token index.",
       inputSchema: {
-        search: z.string().optional(),
+        search: z.string().optional().describe("Token name, full name, pair id or token index."),
         sortBy: z.enum(["volume", "marketCap", "name"]).optional().describe("Default volume."),
         ...shapeInput,
       },
@@ -437,9 +437,9 @@ export function registerMarketTools(server: McpServer): void {
       inputSchema: {
         window: z.enum(["day", "week", "month"]).optional().describe("Default week."),
         sortBy: z.enum(["stake", "apr", "uptime", "commission", "recentBlocks", "name"]).optional().describe("Default stake."),
-        order: z.enum(["asc", "desc"]).optional(),
+        order: z.enum(["asc", "desc"]).optional().describe("Default desc."),
         search: z.string().optional().describe("Name or address substring."),
-        excludeJailed: z.boolean().optional(),
+        excludeJailed: z.boolean().optional().describe("Drop jailed validators."),
         ...shapeInput,
       },
     },

@@ -13,9 +13,15 @@
  *
  * The server runs with scripts/qa/fetch-spy.mjs preloaded, and the smoke fails if
  * it contacts any host outside the mode's allowlist (strict: www.flowscan.xyz only).
+ *
+ * Then the same built server is started with `--http --port 0` and a handful of
+ * tools, the guide prompt and the resources are exercised over Streamable HTTP with
+ * the SDK's StreamableHTTPClientTransport; the server must exit 0 on SIGTERM.
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -523,6 +529,74 @@ function parsePayload(text: string): { json: Json | null; truncated: boolean } {
   }
 }
 
+/** Streamable HTTP: start `dist/index.js --http --port 0`, run a few calls, stop it with SIGTERM. */
+async function httpSmoke(failures: string[]): Promise<void> {
+  const child = spawn(process.execPath, [path.join(ROOT, "dist", "index.js"), "--http", "--port", "0"], { stdio: ["ignore", "pipe", "pipe"], env: process.env });
+  let stderr = "";
+  let stdout = "";
+  child.stdout.on("data", (b) => (stdout += String(b)));
+  const url = await new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`HTTP server did not start: ${stderr}`)), 15_000);
+    child.stderr.on("data", (b) => {
+      stderr += String(b);
+      const m = stderr.match(/at (http:\/\/\S+\/mcp)/);
+      if (m) {
+        clearTimeout(timer);
+        resolve(m[1]);
+      }
+    });
+    child.once("exit", (code) => reject(new Error(`HTTP server exited early (${code}): ${stderr}`)));
+  });
+  const client = new Client({ name: "flowscan-smoke-http", version: "0.0.0" });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+    const { tools } = await client.listTools();
+    const expected = STRICT_TOOL_COUNT + (DIRECT ? DIRECT_TOOL_COUNT : 0);
+    if (tools.length !== expected) failures.push(`http: expected ${expected} tools, got ${tools.length}`);
+    const calls: Array<[string, Record<string, unknown>, (d: Json) => void]> = [
+      ["flowscan_coverage", {}, (d) => assert(d.mode === (DIRECT ? "hyperliquid-direct" : "strict"), "coverage mode")],
+      ["flowscan_builder_lookup", { query: "fomo" }, (d) => assert(JSON.stringify(d).toLowerCase().includes("fomo"), "fomo not found")],
+      ["flowscan_revenue_summary", {}, (d) => assert(d.data.windows.length === 3, "windows")],
+      ["flowscan_staking_overview", { limit: 3 }, (d) => assert(d.data.validators.length === 3, "validators")],
+      ...(DIRECT ? ([["flowscan_prices", { coins: ["HYPE"] }, (d: Json) => assert(JSON.stringify(d).includes("HYPE"), "HYPE price")]] as Array<[string, Record<string, unknown>, (d: Json) => void]>) : []),
+    ];
+    for (const [name, args, check] of calls) {
+      const t0 = Date.now();
+      try {
+        const res = (await client.callTool({ name, arguments: args }, undefined, { timeout: CALL_TIMEOUT_MS })) as { isError?: boolean; content: Array<{ text?: string }> };
+        if (res.isError) throw new Error(res.content[0]?.text?.slice(0, 300));
+        check(JSON.parse(res.content[0].text ?? ""));
+        console.log(`ok   http ${name}  ${Date.now() - t0}ms`);
+      } catch (err) {
+        failures.push(`http ${name}: ${(err as Error).message}`);
+        console.log(`FAIL http ${name}: ${(err as Error).message}`);
+      }
+    }
+    const prompt = await client.getPrompt({ name: "flowscan_guide" });
+    if (!String((prompt.messages[0]?.content as { text?: string })?.text ?? "").includes("flowscan_coverage")) failures.push("http: flowscan_guide prompt has no guide text");
+    const uris = (await client.listResources()).resources.map((r) => r.uri).sort();
+    if (uris.join(",") !== "flowscan://coverage,flowscan://guide") failures.push(`http: resources ${uris.join(",")}`);
+    console.log(`ok   http prompts/get flowscan_guide, resources/list (${uris.join(", ")})`);
+  } catch (err) {
+    failures.push(`http transport: ${(err as Error).message}`);
+  } finally {
+    await client.close().catch(() => {});
+    const exitCode = await new Promise<number | null>((resolve) => {
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        resolve(null);
+      }, 5_000);
+      child.once("exit", (code) => {
+        clearTimeout(timer);
+        resolve(code);
+      });
+      child.kill("SIGTERM");
+    });
+    if (exitCode !== 0) failures.push(`http: server did not exit cleanly on SIGTERM (code ${exitCode}): ${stderr.slice(-500)}`);
+    if (stdout.trim()) failures.push(`http: server wrote to stdout: ${stdout.slice(0, 200)}`);
+  }
+}
+
 async function main(): Promise<void> {
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -625,6 +699,9 @@ async function main(): Promise<void> {
   if (missingFromCoverage.length) failures.push(`tools missing from coverage map: ${missingFromCoverage.join(", ")}`);
 
   await client.close();
+
+  console.log("\n=== streamable HTTP transport ===");
+  await httpSmoke(failures);
 
   // Host allowlist per mode, from the fetch/WebSocket spy.
   const hosts = [...hostsSeen.keys()].sort();

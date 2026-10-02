@@ -137,9 +137,9 @@ export function registerHip3Tools(server: McpServer): void {
         "HIP-3 market tables. Without `symbol`: all HIP-3 markets (dex, symbol, canonical, asset class) filterable by dex/assetClass/search. With `symbol` ('TSLA', 'GOLD'): per listing DEX the OI, DAU, volume, spread, slippage (1k-1m), plus OI/DAU history trimmed to `days`. Prefer this to compare one underlying across HIP-3 DEXs; live positioning is in flowscan_perp_markets ('xyz:TSLA'), Binance in flowscan_hip3_binance_comparison.",
       inputSchema: {
         symbol: z.string().optional().describe("Canonical underlying symbol for a cross-DEX comparison."),
-        dex: z.string().optional(),
-        assetClass: z.enum(["Crypto", "Indices", "Equities", "Commodities", "Currencies", "Bonds", "Private", "Other"]).optional(),
-        search: z.string().optional(),
+        dex: z.string().optional().describe("HIP-3 DEX (display name or prefix)."),
+        assetClass: z.enum(["Crypto", "Indices", "Equities", "Commodities", "Currencies", "Bonds", "Private", "Other"]).optional().describe("Asset class filter."),
+        search: z.string().optional().describe("Symbol substring."),
         days: z.number().int().min(1).max(400).optional().describe("Comparison history length (default 30)."),
         ...shapeInput,
       },
