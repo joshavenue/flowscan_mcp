@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "flowscan": {
+      "command": "node",
+      "args": ["/absolute/path/to/flowscan_mcp/dist/index.js"]
+    }
+  }
+}

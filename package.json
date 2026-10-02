@@ -1,0 +1,36 @@
+{
+  "name": "flowscan-mcp",
+  "version": "0.1.0",
+  "description": "MCP server exposing everything shown on flowscan.xyz (Hyperliquid explorer) as tools for AI agents",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "flowscan-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').chmodSync('dist/index.js',0o755)\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx src/index.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "prepare": "npm run build",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9"
+  }
+}
