@@ -39,6 +39,10 @@ const PVP_BUILDER = "0x0cbf655b0d22ae71fba3a674b0e1c0c7e7f975af";
 const FOMO_SOCIAL = "0x2a2b6b093a9813fbd8cddae800c3d17d46460d17";
 const WEEK = 1789761600000;
 const DAY = 86_400_000;
+const BUSY = "0x5b5d51203a0f9079f8aeb098a6523a13f298c060"; // large account: thousands of orders/funding rows
+const YESTERDAY = new Date(Date.now() - DAY).toISOString().slice(0, 10);
+/** Every default-args call must stay well under Claude Code's ~45k-char MCP result limit. */
+const MAX_CHARS = 40_000;
 
 const hip4: { outcomeId?: number; yesAssetId?: string; noAssetId?: string } = {};
 const builderRevenue: Record<string, Json> = {};
@@ -64,6 +68,7 @@ const cases: Case[] = [
     allowTruncate: true,
     check: (d) => assert(Array.isArray(d._truncated) && d._truncated.length > 0 && /TRUNCATED/.test(d._truncatedNote), "expected structured truncation metadata"),
   },
+  { tool: "flowscan_peers", label: "nodes defaults", args: { section: "nodes" } },
   { tool: "flowscan_peers", label: "all", args: { section: "all" }, check: (d) => assert(d.nodesPaging && d.data.nodes.length <= 50, "all not paged") },
   { tool: "flowscan_staking_overview", args: { limit: 10 }, check: (d) => assert(d.data.validators.length === 10 && Number(d.data.total_staked) > 0, "validators") },
   {
@@ -86,7 +91,9 @@ const cases: Case[] = [
   },
 
   // revenue
-  { tool: "flowscan_revenue_hypercore_fees", args: { days: 14 }, check: (d) => assert(d.data.length === 14 && d.data[0].nativeHypercoreFee && d.data.at(-1).partial === true && d.rangeTotals.totalHypercoreFeeUsdc > 0, "core fees") },
+  { tool: "flowscan_revenue_hypercore_fees", args: { days: 14 }, check: (d) => assert(d.data.length === 14 && d.data[0].nativeHypercoreFee && d.data.at(-1).day === YESTERDAY && d.rangeTotals.totalHypercoreFeeUsdc > 0, "core fees (complete days)") },
+  { tool: "flowscan_revenue_hypercore_fees", label: "includeToday", args: { days: 3, includeToday: true }, check: (d) => assert(d.data.length === 4 && d.data.at(-1).partial === true, "includeToday") },
+  { tool: "flowscan_revenue_priority_gas", label: "days ends yesterday", args: { days: 7 }, check: (d) => assert(d.data.at(-1).day === YESTERDAY && d.rangeTotals.days === 7, "gas days") },
   { tool: "flowscan_revenue_hypercore_fees", label: "range", args: { startTime: Date.now() - 6 * DAY, endTime: Date.now() - 2 * DAY }, check: (d) => assert(d.data.length >= 3, "range") },
   {
     tool: "flowscan_revenue_deployer_fees",
@@ -115,7 +122,13 @@ const cases: Case[] = [
   // perp snapshot
   { tool: "flowscan_perp_markets", args: { limit: 10 }, check: (d) => assert(d.data.markets.length === 10, "markets") },
   { tool: "flowscan_perp_markets", label: "xyz:", args: { market: "xyz:", sortBy: "totalPositions", limit: 5 }, check: (d) => assert(d.data.markets.every((m: Json) => m.market.startsWith("xyz:")), "xyz filter") },
-  { tool: "flowscan_perp_positions", args: { market: "BTC", limit: 10 }, check: (d) => assert(d.data.positions.length === 10 && d.data.filteredSummary && d.data.snapshotIso, "BTC positions") },
+  { tool: "flowscan_perp_positions", args: { market: "BTC", limit: 10 }, check: (d) => assert(d.data.positions.length === 10 && d.data.filteredSideSummary && d.data.marketSummary?.longCount > 0 && d.data.snapshotIso, "BTC positions") },
+  {
+    tool: "flowscan_perp_positions",
+    label: "ETH shorts keep market longs",
+    args: { market: "ETH", side: "short", limit: 5 },
+    check: (d) => assert(d.data.filteredSideSummary.filter.side === "short" && d.data.marketSummary.longNotional > 0, "side filter vs market summary"),
+  },
   { tool: "flowscan_perp_positions", label: "bare TSLA", args: { market: "TSLA", limit: 2 }, check: (d) => assert(d.data.market === "xyz:TSLA", "TSLA not resolved") },
   { tool: "flowscan_perp_positions", label: "unknown market", args: { market: "NOPE_NOT_A_MARKET" }, expectError: true },
   {
@@ -143,7 +156,29 @@ const cases: Case[] = [
   { tool: "flowscan_address_orders", args: { address: VAULT, limit: 20 }, check: (d) => assert(d.data.length > 0 && d.paging.rowsReturned > 0, "no open orders") },
   { tool: "flowscan_address_orders", label: "openDetailed", args: { address: VAULT, kind: "openDetailed", limit: 10 } },
   { tool: "flowscan_address_orders", label: "historical", args: { address: VAULT, kind: "historical", limit: 20 }, check: (d) => assert(d.data.length === 20 && d.data[0].status && d.coveredRange, "historical") },
-  { tool: "flowscan_address_fills", args: { address: VAULT, limit: 20 }, check: (d) => assert(d.data.length === 20 && d.data[0].time >= d.data[19].time, "fills newest first") },
+  { tool: "flowscan_address_fills", args: { address: VAULT, limit: 20 }, check: (d) => assert(d.data.length === 20 && d.data[0].time >= d.data[19].time && d.data[0].timeIso && d.totals.count > 20, "fills newest first + totals") },
+  { tool: "flowscan_address_fills", label: "defaults busy", args: { address: BUSY } },
+  {
+    tool: "flowscan_address_fills",
+    label: "24h window auto-paged",
+    args: { address: VAULT, startTime: Date.now() - DAY },
+    check: (d) => assert(d.upstreamRequests >= 1 && typeof d.totals.closedPnlUsdc === "number" && d.totals.byCoin, "fills window totals"),
+  },
+  { tool: "flowscan_address_orders", label: "historical defaults busy", args: { address: BUSY, kind: "historical" }, check: (d) => assert(d.countsByStatus && d.count > 0, "countsByStatus") },
+  { tool: "flowscan_address_orders", label: "openDetailed defaults", args: { address: VAULT, kind: "openDetailed" } },
+  {
+    tool: "flowscan_address_ledger",
+    label: "funding 7d busy defaults",
+    args: { address: BUSY, kind: "funding" },
+    check: (d) => assert(typeof d.totals.netUsdc === "number" && Math.abs(d.totals.netUsdc - (d.totals.receivedUsdc - d.totals.paidUsdc)) < 0.01 && d.data[0].timeIso, "funding totals"),
+  },
+  {
+    tool: "flowscan_address_ledger",
+    label: "ledger byType busy",
+    args: { address: BUSY, startTime: Date.now() - 365 * DAY },
+    check: (d) => assert(d.totals.byType && Object.keys(d.totals.byType).length > 0, "ledger byType"),
+  },
+  { tool: "flowscan_address_fills", label: "bad field reported", args: { address: VAULT, limit: 2, fields: ["nope", "data.coin"] }, check: (d) => assert(d._fieldsNotFound?.includes("nope") && d.data[0].coin, "fieldsNotFound") },
   { tool: "flowscan_address_fills", label: "range", args: { address: VAULT, startTime: Date.now() - 2 * 3600_000, limit: 10 }, check: (d) => assert("capped" in d, "range meta") },
   { tool: "flowscan_address_ledger", args: { address: VAULT, limit: 20 } },
   { tool: "flowscan_address_ledger", label: "funding", args: { address: VAULT, kind: "funding", startTime: Date.now() - 6 * 3600_000, limit: 20 }, check: (d) => assert(d.data.length > 0, "funding") },
@@ -193,6 +228,17 @@ const cases: Case[] = [
     },
   },
   { tool: "flowscan_hip4_markets", label: "settled", args: { section: "settled", limit: 5 }, check: (d) => assert(d.data.settledOutcomes.length > 0, "settled") },
+  {
+    tool: "flowscan_hip4_markets",
+    label: "defaults sorted",
+    args: {},
+    check: (d) => {
+      const r = d.data.activeOutcomes;
+      assert(r.length > 0 && r.every((x: Json, i: number) => i === 0 || r[i - 1].volume24h >= x.volume24h) && !("description" in r[0]), "volume24h sort / slim rows");
+    },
+  },
+  { tool: "flowscan_hip4_markets", label: "bad field reported", args: { fields: ["active.outcomeId"] }, check: (d) => assert(d.data._fieldsNotFound && d.data._availableFields.includes("activeOutcomes"), "fieldsNotFound") },
+  { tool: "flowscan_hip4_markets", label: "array path", args: { fields: ["activeOutcomes.outcomeId"], limit: 3 }, check: (d) => assert(d.data.activeOutcomes.length === 3 && d.data.activeOutcomes[0].outcomeId, "array path pick") },
   { tool: "flowscan_hip4_markets", label: "questions", args: { section: "questions", limit: 5 } },
   { tool: "flowscan_hip4_markets", label: "all+search", args: { section: "all", search: "BTC" } },
   {
@@ -205,7 +251,8 @@ const cases: Case[] = [
 
   // HIP-3
   { tool: "flowscan_hip3_overview", args: {}, check: (d) => assert(d.data.overview.total_volume > 0 && d.data.market_share.XYZ, "overview") },
-  { tool: "flowscan_hip3_daily", args: { metric: "volume", days: 14 }, check: (d) => assert(d.data.dates.length === 14 && d.data.series.XYZ.length === 14, "daily") },
+  { tool: "flowscan_hip3_daily", args: { metric: "volume", days: 14 }, check: (d) => assert(d.data.rows.length === 14 && d.data.rows[0].date && "XYZ" in d.data.rows[0], "daily rows") },
+  { tool: "flowscan_hip3_daily", label: "raw", args: { metric: "volume", days: 5, raw: true }, check: (d) => assert(d.data.dates.length === 5 && d.data.series.XYZ.length === 5, "raw daily") },
   { tool: "flowscan_hip3_daily", label: "oi_by_market", args: { metric: "oi_by_market", days: 7 }, check: (d) => assert(Array.isArray(d.data.markets), "oi_by_market") },
   { tool: "flowscan_hip3_markets", args: { dex: "XYZ", assetClass: "Equities", limit: 20 }, check: (d) => assert(d.data.markets.length > 0, "markets") },
   {
@@ -214,7 +261,7 @@ const cases: Case[] = [
     args: { symbol: "TSLA", days: 7 },
     check: (d) => assert(d.data.comparison?.dexes?.XYZ && Object.values(d.data.comparison.history.oi).every((a: Json) => a.length === 7), "TSLA comparison"),
   },
-  { tool: "flowscan_hip3_dex", args: { dex: "XYZ", days: 7, limit: 10 }, check: (d) => assert(d.data.markets.length === 10 && d.data.total && "lastDayPartial" in d.data.daily_totals, "dex") },
+  { tool: "flowscan_hip3_dex", args: { dex: "XYZ", days: 7, limit: 10 }, check: (d) => assert(d.data.markets.length === 10 && d.data.total && d.data.daily_totals.rows.length === 7 && d.data.daily_totals.rows[0].date, "dex") },
   { tool: "flowscan_hip3_dex", label: "prefix mkts", args: { dex: "mkts", days: 3, limit: 3 }, check: (d) => assert(d.data.dex === "KM", "prefix alias") },
   { tool: "flowscan_hip3_builders", args: { limit: 10 }, check: (d) => assert(d.data.builders.length === 10 && d.data.totals, "builders") },
   { tool: "flowscan_hip3_builders", label: "dex XYZ 30d", args: { dex: "XYZ", window: "30d", limit: 5 }, check: (d) => assert(d.data.builders.length > 0 && d.data.rankedBy === "XYZ.30d", "dex rank") },
@@ -360,6 +407,7 @@ async function main(): Promise<void> {
   const failures: string[] = [];
   const rows: Array<{ name: string; status: string; ms: number; size: number }> = [];
   const tested = new Set<string>();
+  const maxByTool = new Map<string, number>();
 
   for (const c of cases) {
     const name = c.label ? `${c.tool} [${c.label}]` : c.tool;
@@ -402,7 +450,12 @@ async function main(): Promise<void> {
       }
     }
     const ms = Date.now() - t0;
+    if (text.length > MAX_CHARS) {
+      status = "FAIL";
+      failures.push(`${name}: ${text.length} chars exceeds ${MAX_CHARS}`);
+    }
     rows.push({ name, status, ms, size: text.length });
+    maxByTool.set(c.tool, Math.max(maxByTool.get(c.tool) ?? 0, text.length));
     console.log(`${status === "FAIL" ? "FAIL" : "ok  "} ${name}  ${ms}ms  ${text.length} chars  ${text.slice(0, 200).replace(/\s+/g, " ")}`);
   }
 
@@ -422,6 +475,8 @@ async function main(): Promise<void> {
   console.log("\n=== summary ===");
   console.log(`${"tool".padEnd(70)} ${"status".padEnd(17)} ${"ms".padStart(7)} ${"chars".padStart(7)}`);
   for (const r of rows) console.log(`${r.name.padEnd(70)} ${r.status.padEnd(17)} ${String(r.ms).padStart(7)} ${String(r.size).padStart(7)}`);
+  console.log(`\n=== max chars per tool (limit ${MAX_CHARS}) ===`);
+  for (const [t, n] of [...maxByTool.entries()].sort((a, b) => b[1] - a[1])) console.log(`${t.padEnd(45)} ${String(n).padStart(7)}`);
   console.log(`\n${rows.length} calls, ${tested.size}/${toolNames.size} tools covered`);
 
   const fs = builderRevenue.fomoSocial;

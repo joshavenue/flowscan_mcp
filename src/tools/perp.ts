@@ -53,9 +53,9 @@ export function registerPerpTools(server: McpServer): void {
     {
       title: "Largest open perp positions in a market",
       description:
-        "Homepage perp snapshot drill-down: open positions in one market, largest first (address, signed size, notional, side, entry, leverage, liquidation price, account value, funding PnL, all-time PnL, size change since last snapshot), plus total/totalPages, snapshotIso/snapshotAgeSeconds and filteredSummary (long/short notional & counts, two-sided OI = long + short, median leverage). Market is case-insensitive; a bare HIP-3 symbol ('TSLA') resolves to 'xyz:TSLA' when unique, else the error lists candidates.",
+        "Perp snapshot drill-down: open positions in one market, largest first (address, signed size, notional, side, entry, leverage, liq price, account value, funding/all-time PnL), with snapshotIso/snapshotAgeSeconds, marketSummary (whole market, unfiltered; OI = long + short notional) and filteredSideSummary (over the filtered rows only, with `filter`). Market is case-insensitive; bare 'TSLA' resolves to 'xyz:TSLA' when unique.",
       inputSchema: {
-        market: z.string().describe("Market symbol as shown by flowscan_perp_markets (e.g. 'BTC', 'xyz:TSLA'); case-insensitive."),
+        market: z.string().describe("Market, e.g. 'BTC', 'xyz:TSLA'."),
         side: z.enum(["long", "short"]).optional(),
         sort: z.enum(["notional", "size"]).optional().describe("Sort by notional (default) or size."),
         dir: z.enum(["asc", "desc"]).optional().describe("Sort direction (default desc)."),
@@ -71,7 +71,7 @@ export function registerPerpTools(server: McpServer): void {
         maxReturn: z.number().optional(),
         markPx: z.number().optional().describe("Mark price used by the server for return filters."),
         limit: z.number().int().min(1).max(200).optional().describe("Positions per page (default 50, max 200)."),
-        page: z.number().int().min(1).optional().describe("1-based page number for paging through all positions (response has total/totalPages)."),
+        page: z.number().int().min(1).optional().describe("1-based page (see totalPages)."),
         fields: shapeInput.fields,
       },
     },
@@ -101,7 +101,22 @@ export function registerPerpTools(server: McpServer): void {
           );
         }
       }
-      const out = { ...res.data, ...snapshotAge(res.data.timestamp), ...(resolvedNote ? { resolvedNote } : {}) };
+      // filteredSummary describes only the filtered rows (e.g. side=short shows longNotional 0); rename it and add the
+      // unfiltered market totals from the markets route so "no longs" is never inferred from a filter.
+      const { filteredSummary, ...restData } = res.data;
+      const mk = (((await get("/api/perp-snapshot/markets")) as Rec).markets as Rec[] | undefined)?.find((m) => String(m.market).toLowerCase() === String(res.data.market ?? market).toLowerCase());
+      const filter = Object.fromEntries(
+        Object.entries({ side: q.side, minSize: q.minSize, maxSize: q.maxSize, minNotional: q.minNotional, maxNotional: q.maxNotional, minEntry: q.minEntry, maxEntry: q.maxEntry, minLiq: q.minLiq, maxLiq: q.maxLiq, minReturn: q.minReturn, maxReturn: q.maxReturn }).filter(([, v]) => v !== undefined),
+      );
+      const out = {
+        ...restData,
+        ...snapshotAge(res.data.timestamp),
+        ...(resolvedNote ? { resolvedNote } : {}),
+        marketSummary: mk
+          ? { longCount: mk.longCount, shortCount: mk.shortCount, longNotional: mk.longNotional, shortNotional: mk.shortNotional, openInterest: mk.openInterest, totalPositions: mk.totalPositions, medianLeverage: mk.medianLeverage, avgEntryPrice: mk.avgEntryPrice, note: "whole market, unfiltered; openInterest = long + short notional" }
+          : null,
+        filteredSideSummary: { filter: Object.keys(filter).length ? filter : "none", ...((filteredSummary as Rec) ?? {}), note: "totals over the positions matching `filter` only" },
+      };
       return result(envelope(res.route, pick(out, fields)));
     },
   );

@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { post } from "../client.js";
 import { defineTool } from "../register.js";
-import { ETH_ADDRESS, envelope, isoOf, matches, page, pick, result, shapeInput } from "../shape.js";
+import { ETH_ADDRESS, envelope, envelopeRows, isoOf, matches, page, pick, result, shapeInput } from "../shape.js";
 import { findDex, KNOWN_DEX_HELP } from "../dex.js";
 import { stakingOverview } from "./validators.js";
 
@@ -47,9 +47,80 @@ function rangeMeta(rows: Rec[], key: string, mode: "range" | "recent"): Rec {
   return meta;
 }
 
+/** Coverage metadata for a fetchWindow() result. */
+function windowInfo(rows: Rec[], w: { pages: number; complete: boolean }, startTime: number): Rec {
+  if (rows.length === 0) return { returned: 0, capped: false, upstreamRequests: w.pages };
+  const times = rows.map((r) => Number(r.time ?? 0)).filter((t) => t > 0);
+  const from = Math.min(...times);
+  const to = Math.max(...times);
+  const meta: Rec = {
+    returned: rows.length,
+    upstreamRequests: w.pages,
+    capped: !w.complete,
+    coveredRange: { from, to, fromIso: new Date(from).toISOString(), toIso: new Date(to).toISOString(), requestedStartIso: new Date(startTime).toISOString() },
+  };
+  if (!w.complete) {
+    meta.nextStartTime = to;
+    meta.capNote = `Window not fully covered after ${w.pages} requests: rows (and totals) only cover ${new Date(from).toISOString()} .. ${new Date(to).toISOString()}. Call again with startTime=nextStartTime (or raise maxPages) for later rows; rows at exactly nextStartTime may repeat.`;
+  }
+  return meta;
+}
+
 /** page() metadata relabelled so a capped upstream count is not mistaken for the window total. */
 function rowPaging(p: { total: number; offset: number; limit: number; hasMore: boolean }, capped: boolean): Rec {
   return { rowsReturned: p.total, offset: p.offset, limit: p.limit, hasMore: p.hasMore, ...(capped ? { note: "rowsReturned counts rows in this capped upstream response, not all rows in the period" } : {}) };
+}
+
+/**
+ * Fetch a time-range query, following the upstream 2000-row cap forward (up to
+ * maxPages requests) so totals cover the whole window when possible. Rows at the
+ * boundary millisecond are re-requested and de-duplicated by `key`.
+ */
+async function fetchWindow(type: string, address: string, startTime: number, endTime: number | undefined, extra: Rec, maxPages: number, key: (r: Rec) => string): Promise<{ rows: Rec[]; pages: number; complete: boolean }> {
+  const seen = new Set<string>();
+  const rows: Rec[] = [];
+  let from = startTime;
+  let pages = 0;
+  let complete = false;
+  while (pages < maxPages) {
+    const raw = await info(type, address, { startTime: from, ...(endTime !== undefined ? { endTime } : {}), ...extra });
+    pages++;
+    const batch = Array.isArray(raw) ? (raw as Rec[]) : [];
+    let added = 0;
+    let maxT = from;
+    for (const r of batch) {
+      const k = key(r);
+      if (!seen.has(k)) {
+        seen.add(k);
+        rows.push(r);
+        added++;
+      }
+      maxT = Math.max(maxT, Number(r.time ?? 0));
+    }
+    if (batch.length < UPSTREAM_ROW_CAP) {
+      complete = true;
+      break;
+    }
+    // next page starts at the last timestamp (re-fetching that ms, de-duplicated); if nothing new arrived, step past it
+    from = added === 0 || maxT === from ? maxT + 1 : maxT;
+  }
+  return { rows, pages, complete };
+}
+
+const sumBy = (rows: Rec[], f: (r: Rec) => number) => rows.reduce((a, r) => a + (f(r) || 0), 0);
+const round = (x: number) => Math.round(x * 1e6) / 1e6;
+
+/** Keep the top n entries of a {key: stats} map by a score, folding the rest into `_otherCount`. */
+function topN<T extends Rec>(m: Map<string, T>, n: number, score: (v: T) => number): Rec {
+  const entries = [...m.entries()].sort((a, b) => score(b[1]) - score(a[1]));
+  const out: Rec = Object.fromEntries(entries.slice(0, n));
+  if (entries.length > n) out._otherCount = entries.length - n;
+  return out;
+}
+
+function withIso(r: Rec, key: string, isoKey: string): Rec {
+  const v = r[key];
+  return typeof v === "number" && v > 0 ? { ...r, [isoKey]: new Date(v).toISOString() } : r;
 }
 
 export function registerAddressTools(server: McpServer): void {
@@ -94,7 +165,7 @@ export function registerAddressTools(server: McpServer): void {
       if (pnl && typeof pnl === "object") {
         const ps = { ...(pnl as Rec) };
         const pairs = ps.tradedPairs;
-        const wantsPairs = (args.fields ?? []).some((f: string) => f === "pnlSummary" || f.startsWith("pnlSummary.tradedPairs"));
+        const wantsPairs = (args.fields ?? []).map((f: string) => f.replace(/^data\./, "")).some((f: string) => f === "pnlSummary" || f.startsWith("pnlSummary.tradedPairs"));
         if (Array.isArray(pairs) && pairs.length > 30 && !wantsPairs) ps.tradedPairs = { count: pairs.length, first30: pairs.slice(0, 30), note: "pass fields:['pnlSummary.tradedPairs'] for the full list" };
         out.pnlSummary = ps;
       } else if (pnl) out.pnlSummary = pnl;
@@ -131,7 +202,7 @@ export function registerAddressTools(server: McpServer): void {
     {
       title: "Address open or historical orders",
       description:
-        "Address 'Open Orders' / 'Order History'. kind='open' (default): all resting orders on every DEX (coin, side B/A, limit price, size, oid, time). 'openDetailed': main-DEX orders with trigger/TP-SL/reduce-only/type/TIF (upstream max 100, `capped` then). 'historical': the newest ~2000 orders with final status; coveredRange shows their time span (seconds for busy accounts).",
+        "Address 'Open Orders' / 'Order History'. kind='open' (default): all resting orders on every DEX (coin, side B/A, limit price, size, oid, time). 'openDetailed': main-DEX orders with trigger/TP-SL/reduce-only/type/TIF (upstream max 100, `capped` then). 'historical': the newest ~2000 orders with final status, newest first; countsByStatus (filled/canceled/...) covers all of them, coveredRange shows their time span (seconds for busy accounts). Returns `count` of matching orders; pages default to 100 (open) / 50 rows. Times have ISO twins.",
       inputSchema: {
         address: ETH_ADDRESS,
         kind: z.enum(["open", "openDetailed", "historical"]).optional().describe("Default 'open'."),
@@ -154,8 +225,19 @@ export function registerAddressTools(server: McpServer): void {
         meta = { returned: 100, capped: true, capNote: "frontendOpenOrders returns at most 100 orders (main DEX only); use kind='open' for the complete list across all DEXs." };
       }
       const list = all.filter((o) => matches((o.order as Rec)?.coin ?? o.coin, args.coin));
-      const { items, paging } = page(list, args, kind === "historical" ? 50 : 100);
-      return result(envelope(ROUTE, items.map((o) => pick(o, args.fields)), { paging: rowPaging(paging, Boolean(meta.capped)), kind, ...meta }));
+      const counts: Rec = { count: list.length };
+      if (kind === "historical") {
+        const by: Record<string, number> = {};
+        for (const o of list) by[String(o.status ?? "unknown")] = (by[String(o.status ?? "unknown")] ?? 0) + 1;
+        counts.countsByStatus = Object.fromEntries(Object.entries(by).sort((a, b) => b[1] - a[1]));
+      }
+      const { items, paging } = page(list, args, kind === "open" ? 100 : 50);
+      const rows = items.map((o) =>
+        kind === "historical"
+          ? { ...withIso(o, "statusTimestamp", "statusTimeIso"), order: withIso((o.order as Rec) ?? {}, "timestamp", "timestampIso") }
+          : withIso(o, "timestamp", "timestampIso"),
+      );
+      return result(envelopeRows(ROUTE, rows, args.fields, { kind, ...counts, paging: rowPaging(paging, Boolean(meta.capped)), ...meta }));
     },
   );
 
@@ -165,12 +247,13 @@ export function registerAddressTools(server: McpServer): void {
     {
       title: "Address trade fills",
       description:
-        "Address 'Trades' tab: fills, newest first (coin, price, size, side, direction like 'Open Long', start position, closed PnL, fee, tx hash, oid, time). Without startTime: the most recent ~2000 fills. With startTime[/endTime]: upstream returns the OLDEST 2000 fills from startTime; if `capped`, continue with startTime=nextStartTime.",
+        "Address 'Trades' tab: fills newest first, 50/page (coin, px, sz, side, direction, closed PnL, fee, hash, time + timeIso). `totals` (count, closedPnlUsdc, fees, volumeUsd = px*sz, byCoin) cover ALL matched fills in coveredRange: quote them, never add rows. No startTime: the latest ~2000 fills. With startTime[/endTime]: pages past the 2000-row cap are followed (maxPages); if still `capped`, continue from nextStartTime.",
       inputSchema: {
         address: ETH_ADDRESS,
         startTime: z.number().int().optional().describe("Unix ms. If set, uses the time-range query."),
         endTime: z.number().int().optional().describe("Unix ms (optional, with startTime)."),
-        aggregateByTime: z.boolean().optional().describe("Merge partial fills of one order at the same time (default true, as the site does)."),
+        aggregateByTime: z.boolean().optional().describe("Merge partial fills (default true)."),
+        maxPages: z.number().int().min(1).max(10).optional().describe("Pages to follow past the 2000-row cap (default 5)."),
         coin: z.string().optional().describe("Filter by coin symbol substring."),
         ...shapeInput,
       },
@@ -178,14 +261,42 @@ export function registerAddressTools(server: McpServer): void {
     async (args) => {
       const agg = args.aggregateByTime ?? true;
       const ranged = args.startTime !== undefined;
-      const raw = await (ranged
-        ? info("userFillsByTime", args.address, { startTime: args.startTime, ...(args.endTime !== undefined ? { endTime: args.endTime } : {}), aggregateByTime: agg })
-        : info("userFills", args.address, { aggregateByTime: agg }));
-      const all = Array.isArray(raw) ? (raw as Rec[]) : [];
-      const meta = rangeMeta(all, "time", ranged ? "range" : "recent");
+      let all: Rec[];
+      let windowMeta: Rec;
+      if (ranged) {
+        const w = await fetchWindow("userFillsByTime", args.address, args.startTime, args.endTime, { aggregateByTime: agg }, args.maxPages ?? 5, (r) => String(r.tid ?? `${r.time}:${r.coin}:${r.px}:${r.sz}`));
+        all = w.rows;
+        windowMeta = windowInfo(all, w, args.startTime);
+      } else {
+        const raw = await info("userFills", args.address, { aggregateByTime: agg });
+        all = Array.isArray(raw) ? (raw as Rec[]) : [];
+        windowMeta = rangeMeta(all, "time", "recent");
+      }
       const list = newestFirst(all, "time").filter((f) => matches(f.coin, args.coin));
-      const { items, paging } = page(list, args, 100);
-      return result(envelope(ROUTE, items.map((f) => pick(f, args.fields)), { paging: rowPaging(paging, Boolean(meta.capped)), ...meta }));
+      const byCoin = new Map<string, { count: number; volumeUsd: number; closedPnlUsd: number; fees: number }>();
+      for (const f of list) {
+        const c = String(f.coin);
+        const e = byCoin.get(c) ?? { count: 0, volumeUsd: 0, closedPnlUsd: 0, fees: 0 };
+        e.count++;
+        e.volumeUsd += Number(f.px) * Number(f.sz) || 0;
+        e.closedPnlUsd += Number(f.closedPnl) || 0;
+        e.fees += Number(f.fee) || 0;
+        byCoin.set(c, e);
+      }
+      for (const e of byCoin.values()) Object.assign(e, { volumeUsd: round(e.volumeUsd), closedPnlUsd: round(e.closedPnlUsd), fees: round(e.fees) });
+      const feesByToken: Record<string, number> = {};
+      for (const f of list) feesByToken[String(f.feeToken ?? "USDC")] = round((feesByToken[String(f.feeToken ?? "USDC")] ?? 0) + (Number(f.fee) || 0));
+      const totals = {
+        over: "all fills matched (after the coin filter) in coveredRange, not just this page",
+        count: list.length,
+        closedPnlUsdc: round(sumBy(list, (f) => Number(f.closedPnl))),
+        feesUsdc: feesByToken.USDC ?? 0,
+        feesByToken,
+        volumeUsd: round(sumBy(list, (f) => Number(f.px) * Number(f.sz))),
+        byCoin: topN(byCoin, 25, (v) => v.volumeUsd),
+      };
+      const { items, paging } = page(list, args, 50);
+      return result(envelopeRows(ROUTE, items.map((f) => withIso(f, "time", "timeIso")), args.fields, { totals, paging: rowPaging(paging, Boolean(windowMeta.capped)), ...windowMeta }));
     },
   );
 
@@ -195,31 +306,89 @@ export function registerAddressTools(server: McpServer): void {
     {
       title: "Address funding payments or ledger updates",
       description:
-        "Address 'Funding' / 'Ledger' tabs, newest first. kind='ledger' (default): deposits, withdrawals, transfers, vault flows, liquidations since startTime (default 30 days ago). kind='funding': hourly funding payments {coin, usdc, szi, fundingRate} (default last 7 days). Upstream returns the OLDEST 2000 rows from startTime; if `capped`, continue with startTime=nextStartTime.",
+        "Address 'Funding' / 'Ledger' tabs, newest first, rows with timeIso. kind='ledger' (default, 50/page, since 30 days ago): deposits, withdrawals, sends, transfers, vault/staking moves; totals.byType {count, sumUsdc, inUsdc, outUsdc}. kind='funding' (100/page, last 7 days): hourly payments; totals {netUsdc, paidUsdc, receivedUsdc, byCoin}. Totals cover ALL matched rows in coveredRange: quote them, never add rows. Pages past the 2000-row cap are followed (maxPages); if still `capped`, continue from nextStartTime.",
       inputSchema: {
         address: ETH_ADDRESS,
         kind: z.enum(["funding", "ledger"]).optional().describe("Default 'ledger'."),
         startTime: z.number().int().optional().describe("Unix ms (default now-30d for ledger, now-7d for funding)."),
         endTime: z.number().int().optional().describe("Unix ms."),
-        coin: z.string().optional().describe("Filter by coin (funding) or token (ledger) substring."),
+        coin: z.string().optional().describe("Filter by coin (funding) or token (ledger) substring; applied before totals."),
+        maxPages: z.number().int().min(1).max(10).optional().describe("Pages to follow past the 2000-row cap (default 5)."),
         ...shapeInput,
       },
     },
     async (args) => {
       const kind = args.kind ?? "ledger";
       const startTime = args.startTime ?? Date.now() - (kind === "funding" ? 7 : 30) * DAY;
-      const extra: Rec = { startTime };
-      if (args.endTime !== undefined) extra.endTime = args.endTime;
-      const raw = await info(kind === "funding" ? "userFunding" : "userNonFundingLedgerUpdates", args.address, extra);
-      const all = Array.isArray(raw) ? (raw as Rec[]) : [];
-      const meta = rangeMeta(all, "time", "range");
-      const list = newestFirst(all, "time").filter((r) => {
+      const addr = args.address.toLowerCase();
+      const w = await fetchWindow(kind === "funding" ? "userFunding" : "userNonFundingLedgerUpdates", args.address, startTime, args.endTime, {}, args.maxPages ?? 5, (r) =>
+        `${r.time}:${r.hash}:${JSON.stringify(r.delta)}`,
+      );
+      const windowMeta = windowInfo(w.rows, w, startTime);
+      const list = newestFirst(w.rows, "time").filter((r) => {
         if (!args.coin) return true;
         const d = (r.delta as Rec) ?? {};
         return matches(d.coin ?? d.token, args.coin);
       });
-      const { items, paging } = page(list, args, 100);
-      return result(envelope(ROUTE, items.map((r) => pick(r, args.fields)), { paging: rowPaging(paging, Boolean(meta.capped)), kind, startTime, ...meta }));
+      const usd = (d: Rec) => Number(d.usdc ?? d.usdcValue ?? NaN);
+      let totals: Rec;
+      if (kind === "funding") {
+        const byCoin = new Map<string, { net: number; paid: number; received: number; count: number }>();
+        let paid = 0;
+        let received = 0;
+        for (const r of list) {
+          const d = (r.delta as Rec) ?? {};
+          const v = Number(d.usdc) || 0;
+          const e = byCoin.get(String(d.coin)) ?? { net: 0, paid: 0, received: 0, count: 0 };
+          e.count++;
+          e.net += v;
+          if (v < 0) {
+            e.paid -= v;
+            paid -= v;
+          } else {
+            e.received += v;
+            received += v;
+          }
+          byCoin.set(String(d.coin), e);
+        }
+        for (const e of byCoin.values()) Object.assign(e, { net: round(e.net), paid: round(e.paid), received: round(e.received) });
+        totals = {
+          over: "all funding rows matched (after the coin filter) in coveredRange, not just this page",
+          count: list.length,
+          netUsdc: round(received - paid),
+          paidUsdc: round(paid),
+          receivedUsdc: round(received),
+          sign: "netUsdc > 0 means the account received funding; paidUsdc/receivedUsdc are positive magnitudes",
+          byCoin: topN(byCoin, 25, (v) => Math.abs(v.net)),
+        };
+      } else {
+        const byType = new Map<string, { count: number; sumUsdc: number; inUsdc: number; outUsdc: number; noUsdValue: number }>();
+        for (const r of list) {
+          const d = (r.delta as Rec) ?? {};
+          const t = String(d.type ?? "unknown");
+          const e = byType.get(t) ?? { count: 0, sumUsdc: 0, inUsdc: 0, outUsdc: 0, noUsdValue: 0 };
+          e.count++;
+          const v = usd(d);
+          if (Number.isNaN(v)) e.noUsdValue++;
+          else {
+            e.sumUsdc += v;
+            const outgoing = t === "withdraw" || (typeof d.user === "string" && d.user.toLowerCase() === addr && String(d.destination ?? "").toLowerCase() !== addr);
+            const incoming = t === "deposit" || (typeof d.destination === "string" && d.destination.toLowerCase() === addr && String(d.user ?? "").toLowerCase() !== addr);
+            if (outgoing) e.outUsdc += v;
+            else if (incoming) e.inUsdc += v;
+          }
+          byType.set(t, e);
+        }
+        for (const e of byType.values()) Object.assign(e, { sumUsdc: round(e.sumUsdc), inUsdc: round(e.inUsdc), outUsdc: round(e.outUsdc) });
+        totals = {
+          over: "all ledger rows matched (after the coin filter) in coveredRange, not just this page",
+          count: list.length,
+          byType: Object.fromEntries([...byType.entries()].sort((a, b) => b[1].count - a[1].count)),
+          note: "sumUsdc uses delta.usdc or delta.usdcValue; inUsdc/outUsdc classify deposits, withdrawals and transfers to/from this address (internal moves such as accountClassTransfer are neither); noUsdValue counts rows without a USD value (e.g. HYPE staking transfers).",
+        };
+      }
+      const { items, paging } = page(list, args, kind === "funding" ? 100 : 50);
+      return result(envelopeRows(ROUTE, items.map((r) => withIso(r, "time", "timeIso")), args.fields, { kind, totals, paging: rowPaging(paging, Boolean(windowMeta.capped)), startTime, ...windowMeta }));
     },
   );
 
@@ -314,7 +483,7 @@ export function registerAddressTools(server: McpServer): void {
       const data = await info(type, args.address);
       if (Array.isArray(data)) {
         const { items, paging } = page(data as Rec[], args, 100);
-        return result(envelope(ROUTE, items.map((r) => pick(r, args.fields)), { paging, kind: args.kind }));
+        return result(envelopeRows(ROUTE, items, args.fields, { paging, kind: args.kind }));
       }
       return result(envelope(ROUTE, pick(data, args.fields), { kind: args.kind }));
     },

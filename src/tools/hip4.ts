@@ -20,6 +20,52 @@ function compactOutcome(o: Rec, keepContexts = false): Rec {
   return q ? { ...rest, questionId: q.questionId, questionName: q.displayName ?? q.name } : rest;
 }
 
+const n = (v: unknown) => Number(v ?? 0) || 0;
+/** 24h notional volume (YES + NO spot contexts), 0 when unknown. */
+const volume24h = (o: Rec) => n((o.yesContext as Rec | undefined)?.dayNtlVlm) + n((o.noContext as Rec | undefined)?.dayNtlVlm);
+/** Lifetime notional volume: totalVolume when present, else YES + NO trade stats. */
+const volumeTotal = (o: Rec) => (o.totalVolume !== undefined && o.totalVolume !== null ? n(o.totalVolume) : n((o.yesStats as Rec | undefined)?.volumeNotional) + n((o.noStats as Rec | undefined)?.volumeNotional));
+
+const statsSlim = (st: unknown) =>
+  st && typeof st === "object" ? { trades: (st as Rec).trades, uniqueTraders: (st as Rec).uniqueTraders, volumeNotional: (st as Rec).volumeNotional, lastPrice: (st as Rec).lastPrice, vwap: (st as Rec).vwap } : st;
+
+/** Default row: identity, pricing and volume only (no description/keywords/template fields). */
+function slimOutcome(o: Rec): Rec {
+  const q = o.question as Rec | null | undefined;
+  const row: Rec = {
+    outcomeId: o.outcomeId,
+    name: o.name,
+    marketType: o.marketType,
+    yesAssetId: o.yesAssetId,
+    noAssetId: o.noAssetId,
+    underlying: o.underlying,
+    targetPrice: o.targetPrice,
+    expiry: o.expiry,
+    category: o.category ?? q?.category ?? o.subCategory ?? null,
+    yesMark: o.yesMark,
+    noMark: o.noMark,
+    yesChange24h: o.yesChange24h,
+    volume24h: volume24h(o),
+    totalVolume: volumeTotal(o),
+    deployerName: o.deployerName,
+    questionId: q?.questionId,
+    questionName: q ? (q.displayName ?? q.name) : undefined,
+    settleFraction: o.settleFraction,
+    settlePrice: o.settlePrice,
+    yesStats: statsSlim(o.yesStats),
+    noStats: statsSlim(o.noStats),
+  };
+  for (const k of Object.keys(row)) if (row[k] === undefined || row[k] === null) delete row[k];
+  return row;
+}
+
+const SORTERS: Record<string, (o: Rec) => number> = {
+  volume24h,
+  totalVolume: volumeTotal,
+  yesMark: (o) => n(o.yesMark),
+  change24h: (o) => n(o.yesChange24h),
+};
+
 function outcomeText(r: Rec): string {
   const q = (r.question as Rec | null) ?? {};
   return [r.name, r.description, r.displayName, r.deployerName, r.category, r.subCategory, r.underlying, r.marketType, q.displayName, q.category].map((x) => String(x ?? "")).join(" ");
@@ -32,24 +78,31 @@ export function registerHip4Tools(server: McpServer): void {
     {
       title: "HIP-4 prediction markets (questions, active & settled outcomes)",
       description:
-        "The /hip-4 page: HIP-4 prediction markets. section='active' (default, ~250): YES/NO outcomes with outcomeId, asset ids, marketType (binaryPrice, priceTouch, custom, question...), underlying/targetPrice/expiry, yesMark/noMark (0-1 = implied probability), 24h change, volume, deployer, question link (full spot contexts with includeContexts). 'settled': resolved outcomes with settleFraction and trade stats. 'questions': question groups with their outcome ids. 'all': all three. Use flowscan_hip4_outcome(outcomeId) for candles.",
+        "The /hip-4 page: HIP-4 prediction markets. section='active' (default): slim rows (outcomeId, name, marketType, asset ids, underlying/target/expiry, yesMark/noMark = implied probability, yesChange24h, volume24h, totalVolume, deployer, question) sorted by sortBy (default volume24h desc). 'settled': resolved outcomes with settleFraction and trade stats. 'questions': question groups. 'all': all three. full=true for descriptions. Candles: flowscan_hip4_outcome.",
       inputSchema: {
         section: z.enum(["active", "settled", "questions", "all"]).optional(),
         search: z.string().optional().describe("Substring over name, description, category, underlying, type, deployer, question (e.g. 'Premier League')."),
-        category: z.string().optional().describe("Filter by category/sub-category/question category substring (e.g. 'NFL', 'Tournament')."),
-        settledLimit: z.number().int().min(1).max(1000).optional().describe("How many recent settled outcomes/questions the upstream returns (site default 100)."),
-        includeContexts: z.boolean().optional().describe("Include the full YES/NO spot contexts per outcome (default false)."),
+        category: z.string().optional().describe("Category substring (e.g. 'NFL')."),
+        settledLimit: z.number().int().min(1).max(1000).optional().describe("Settled outcomes to fetch (default 100)."),
+        sortBy: z.enum(["volume24h", "totalVolume", "yesMark", "change24h"]).optional().describe("Default volume24h."),
+        order: z.enum(["asc", "desc"]).optional().describe("Default desc."),
+        full: z.boolean().optional().describe("Full rows instead of slim rows."),
+        includeContexts: z.boolean().optional().describe("With full: raw spot contexts."),
         ...shapeInput,
       },
     },
     async (args) => {
       const data = (await get("/api/hip-4", { limit: args.settledLimit ?? 100 }, { ttlMs: 60_000 })) as Rec;
       const section = args.section ?? "active";
+      const sortKey = args.sortBy ?? "volume24h";
+      const sorter = SORTERS[sortKey];
+      const dir = args.order === "asc" ? -1 : 1;
       const key = { active: "activeOutcomes", settled: "settledOutcomes", questions: "questions", all: "" }[section as "active" | "settled" | "questions" | "all"];
       const f = (rows: Rec[]) =>
         rows
           .filter((r) => matches(outcomeText(r), args.search) && (!args.category || [r.category, r.subCategory, (r.question as Rec | null)?.category].some((c) => matches(c ?? "", args.category) && c)))
-          .map((r) => (r.outcomeId !== undefined ? compactOutcome(r, args.includeContexts) : r));
+          .sort((a, b) => (a.outcomeId === undefined ? 0 : (sorter(b) - sorter(a) || volumeTotal(b) - volumeTotal(a)) * dir))
+          .map((r) => (r.outcomeId === undefined ? r : args.full ? compactOutcome(r, args.includeContexts) : slimOutcome(r)));
       if (section === "all") {
         const out: Rec = { generatedAt: data.generatedAt };
         const extra: Rec = {};
@@ -61,7 +114,7 @@ export function registerHip4Tools(server: McpServer): void {
         return result(envelope("/api/hip-4", pick(out, args.fields), extra));
       }
       const { items, paging } = page(f((data[key] as Rec[]) ?? []), args, 20);
-      return result(envelope("/api/hip-4", pick({ generatedAt: data.generatedAt, [key]: items }, args.fields), { paging }));
+      return result(envelope("/api/hip-4", pick({ generatedAt: data.generatedAt, [key]: items }, args.fields), { paging, ...(section === "questions" ? {} : { sortedBy: `${sortKey} ${dir === 1 ? "desc" : "asc"}` }) }));
     },
   );
 

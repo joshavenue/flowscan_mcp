@@ -189,7 +189,8 @@ const scenarios: Scenario[] = [
         c.must(`${w.days}d deployer fees match raw`, rel(w.deployerFeeUsdc, de) < 1e-9, { tool: w.deployerFeeUsdc, raw: de });
         c.must(`${w.days}d priority gas matches raw`, rel(w.priorityGasHype, g) < 1e-9, { tool: w.priorityGasHype, raw: g });
       }
-      const series = await c.call("flowscan_revenue_hypercore_fees", { days: 2 });
+      // [build agent, round 3] `days` now means complete days ending yesterday; today's partial row needs includeToday.
+      const series = await c.call("flowscan_revenue_hypercore_fees", { days: 2, includeToday: true });
       const last = series.json?.data?.at?.(-1);
       c.must("raw series last row is today (partial)", last?.day === todayUtc(), last);
       c.should("partial current-day row is flagged in the data (e.g. partial:true)", last && ("partial" in last || "isPartial" in last), last);
@@ -380,12 +381,13 @@ const scenarios: Scenario[] = [
     name: "Compare XYZ and KM daily volume, 14 days",
     async run(c) {
       const r = await c.call("flowscan_hip3_daily", { metric: "volume", days: 14 });
+      // [build agent, round 3] hip3_daily now returns dated rows [{date, XYZ, KM, ...}] (raw=true keeps {dates, series}).
       const d = r.json?.data;
-      c.must("14 dates", d?.dates?.length === 14);
-      c.must("XYZ and KM series aligned to dates", d?.series?.XYZ?.length === 14 && d?.series?.KM?.length === 14);
+      c.must("14 dated rows", d?.rows?.length === 14 && d.rows.every((x: any) => typeof x.date === "string"));
+      c.must("XYZ and KM values on every row", d?.rows?.every((x: any) => "XYZ" in x && "KM" in x));
       const x = await c.call("flowscan_hip3_daily", { metric: "volume", dex: "XYZ", days: 14 });
-      c.must("dex='XYZ' returns only XYZ", JSON.stringify(Object.keys(x.json?.data?.series ?? {})) === '["XYZ"]', Object.keys(x.json?.data?.series ?? {}));
-      c.should("partial current day flagged (last date is today)", d?.dates?.at(-1) !== todayUtc() || /partial/i.test(r.text), d?.dates?.at(-1));
+      c.must("dex='XYZ' returns only XYZ", JSON.stringify(x.json?.data?.columns ?? []) === '["XYZ"]', x.json?.data?.columns);
+      c.should("partial current day flagged (last date is today)", d?.rows?.at(-1)?.date !== todayUtc() || /partial/i.test(r.text), d?.rows?.at(-1)?.date);
       c.should("multiple DEXs accepted in one call (e.g. dex=['XYZ','KM'])", false, "dex is a single substring");
     },
   },

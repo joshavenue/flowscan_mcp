@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compactAddressLists, isValidYmd, MAX_RESULT_CHARS, page, pick, tail, toText } from "../src/shape.js";
+import { compactAddressLists, isValidYmd, MAX_RESULT_CHARS, page, pick, pickRows, tail, toText } from "../src/shape.js";
 
 test("pick keeps top-level keys and dotted paths, drops the rest", () => {
   const v = { a: 1, b: { c: 2, d: 3 }, e: [1, 2] };
   assert.deepEqual(pick(v, ["a", "b.c"]), { a: 1, b: { c: 2 } });
-  assert.deepEqual(pick(v, ["missing", "b.zzz"]), {});
+  assert.deepEqual(pick(v, ["missing", "b.zzz"]), { _fieldsNotFound: ["missing", "b.zzz"], _availableFields: ["a", "b", "e"] });
+  assert.deepEqual(pick(v, ["a", "nope"]), { a: 1, _fieldsNotFound: ["nope"], _availableFields: ["a", "b", "e"] });
   assert.equal(pick(v, undefined), v);
   assert.equal(pick(v, []), v);
   assert.equal(pick(42, ["a"]), 42);
@@ -68,4 +69,23 @@ test("isValidYmd rejects impossible dates", () => {
   assert.equal(isValidYmd("2026-02-30"), false);
   assert.equal(isValidYmd("2026-13-45"), false);
   assert.equal(isValidYmd("Sept 1"), false);
+});
+
+test("pick accepts a leading data. prefix and walks arrays", () => {
+  const v = { generatedAt: 1, activeOutcomes: [{ outcomeId: 1, name: "a" }, { outcomeId: 2, name: "b" }] };
+  assert.deepEqual(pick(v, ["data.generatedAt"]), { generatedAt: 1 });
+  assert.deepEqual(pick(v, ["activeOutcomes.outcomeId"]), { activeOutcomes: [{ outcomeId: 1 }, { outcomeId: 2 }] });
+  assert.deepEqual(pick(v, ["activeOutcomes.outcomeId", "activeOutcomes.name"]), { activeOutcomes: [{ outcomeId: 1, name: "a" }, { outcomeId: 2, name: "b" }] });
+});
+
+test("pickRows applies fields per row and reports paths that match no row", () => {
+  const rows = [{ coin: "BTC", delta: { usdc: "1" } }, { coin: "ETH" }];
+  const { rows: out, report } = pickRows(rows, ["data.coin", "delta.usdc", "nope"]);
+  assert.deepEqual(out, [{ coin: "BTC", delta: { usdc: "1" } }, { coin: "ETH" }]);
+  assert.deepEqual(report, { _fieldsNotFound: ["nope"], _availableFields: ["coin", "delta"] });
+  assert.deepEqual(pickRows(rows, undefined).report, {});
+});
+
+test("default result cap is 40k", () => {
+  if (!process.env.FLOWSCAN_MAX_RESULT_CHARS) assert.equal(MAX_RESULT_CHARS, 40_000);
 });

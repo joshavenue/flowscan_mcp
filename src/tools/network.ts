@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { get, post } from "../client.js";
 import { defineTool } from "../register.js";
-import { envelope, isoOf, matches, page, pick, result, shapeInput } from "../shape.js";
+import { envelope, envelopeRows, isoOf, matches, page, pick, result, shapeInput } from "../shape.js";
 import { resolveValidator, stakingOverview, type ValidatorResolution } from "./validators.js";
 
 type Rec = Record<string, unknown>;
@@ -31,7 +31,7 @@ export function registerNetworkTools(server: McpServer): void {
       description:
         "The /peers gossip-network crawl (~600 nodes). Default: meta (crawl time, counts, reachability, states), footprint (top countries/ASNs) and sentries (validator sentries with operator, state, peers served). section='nodes' (IP id, role, operator, state, tier, hops, parent, feeders, geo, ASN; filterable), 'edges' (feed links) or 'all' are paged.",
       inputSchema: {
-        section: z.enum(["summary", "nodes", "edges", "all"]).optional().describe("Default summary. nodes (default 50) / edges / all (nodes 50, edges 200) are paged."),
+        section: z.enum(["summary", "nodes", "edges", "all"]).optional().describe("Default summary. nodes (default 50) / edges / all (nodes 30, edges 100) are paged."),
         country: z.string().optional().describe("Exact ISO code ('US') or country name ('Japan')."),
         state: z.enum(["syncing", "full", "unreachable", "no_resp", "other"]).optional().describe("Filter nodes by crawl state."),
         role: z.enum(["hub", "sentry", "fringe", "private", "scraper"]).optional().describe("Filter nodes by role."),
@@ -57,8 +57,8 @@ export function registerNetworkTools(server: McpServer): void {
         return countryOk && (!args.state || n.state === args.state) && (!args.role || n.role === args.role) && matches(n.operator, args.operator);
       };
       if (section === "all") {
-        const n = page(nodes.filter(nodeMatches), args, 50);
-        const e = page(edges, { offset: args.offset, limit: args.limit }, 200);
+        const n = page(nodes.filter(nodeMatches), args, 30);
+        const e = page(edges, { offset: args.offset, limit: args.limit }, 100);
         const out = { ...data, nodes: n.items, edges: e.items };
         return result(envelope("/api/peers", pick(out, args.fields), { nodesPaging: n.paging, edgesPaging: e.paging }));
       }
@@ -118,7 +118,7 @@ export function registerNetworkTools(server: McpServer): void {
       description:
         "Staking page validator drill-down: one validator's summary (name, commission, total delegated, staker count, jailed) plus its delegators (stakers) as {address, amount HYPE}, largest first. `validator` is an address or a validator name (e.g. 'Hyper Foundation 2'). Large validators have thousands of stakers; use limit/offset or search.",
       inputSchema: {
-        validator: z.string().min(1).describe("Validator address (0x...) or name (exact or unique substring, case-insensitive)."),
+        validator: z.string().min(1).describe("Validator address or name."),
         search: z.string().optional().describe("Filter stakers by address substring."),
         ...shapeInput,
       },
@@ -145,7 +145,7 @@ export function registerNetworkTools(server: McpServer): void {
       description:
         "Staking page validator activity: most recent delegation/undelegation events for one validator, newest first (user, amount in HYPE, isUndelegate, tx hash, time ms + ISO). `validator` is an address or a validator name. The upstream `currency` field reads 'USDC' but staking amounts are HYPE.",
       inputSchema: {
-        validator: z.string().min(1).describe("Validator address (0x...) or name (exact or unique substring, case-insensitive)."),
+        validator: z.string().min(1).describe("Validator address or name."),
         limit: z.number().int().min(1).max(500).optional().describe("Number of events (default 50, max 500)."),
         fields: shapeInput.fields,
       },
@@ -155,7 +155,7 @@ export function registerNetworkTools(server: McpServer): void {
       if (v.status !== "resolved") return validatorProblem(args.validator, v);
       const data = await post("/api/staking/info", { type: "stakingEvents", validator: v.address, limit: args.limit ?? 50 });
       const rows = Array.isArray(data) ? (data as Rec[]).map((e) => ({ ...e, timeIso: isoOf(e.time) })) : data;
-      return result(envelope("/api/staking/info", Array.isArray(rows) ? rows.map((r) => pick(r, args.fields)) : pick(rows, args.fields), { validator: v.address }));
+      return result(Array.isArray(rows) ? envelopeRows("/api/staking/info", rows, args.fields, { validator: v.address }) : envelope("/api/staking/info", pick(rows, args.fields), { validator: v.address }));
     },
   );
 }

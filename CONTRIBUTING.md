@@ -36,3 +36,7 @@ npx tsx scripts/qa/scenarios.ts   # live: agent-style QA scenarios, run from src
 The QA harness is described in `scripts/qa/README.md`. It runs the server from source over stdio, compares answers with the raw Flowscan routes, checks that no host other than www.flowscan.xyz is contacted, that the concurrency limit holds and that errors are not retried. Any MUST failure, or any other host being contacted, makes it exit 1; SHOULD checks are reported as warnings. Use `--only 1,5` to run a subset and `--json out.json` to save results. It is deliberately not an npm script.
 
 The smoke test and the QA scenarios need network access and depend on the live site, so CI does not run them on every push. To run them in GitHub Actions, open the CI workflow in the Actions tab and use "Run workflow"; that starts the `smoke` job, which runs both.
+
+## Model-in-the-loop eval
+
+For changes to tool descriptions, output shapes or `skills/flowscan/SKILL.md`, also re-run the eval in `scripts/eval/` (a Sonnet agent answers 220 prompts with only these tools; an Opus judge grades them). It needs the `claude` CLI and costs about $16 per full run, so it is not part of CI. `scripts/eval/system.md` is a copy of the skill body: regenerate it after editing the skill (the command is in `scripts/eval/README.md`), then run under a new `--run-id` and compare with `scripts/eval/results/full/REPORT.md`. Keep the rules that came out of the first run: tools return totals so the agent never adds rows, `fields` misses are reported, and results stay under the 40,000-character default cap.

@@ -1,0 +1,1 @@
+{"mcpServers":{"flowscan":{"command":"node","args":["/home/user/flowscan_mcp/dist/index.js"],"env":{"FLOWSCAN_MAX_CONCURRENCY":"2"}}}}

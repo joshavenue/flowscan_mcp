@@ -1,7 +1,3 @@
----
-name: flowscan
-description: Use for any question about Hyperliquid data that flowscan.xyz shows, such as protocol revenue and fees, HYPE staking and validators, builder codes, HIP-3 perp DEXs, HIP-4 outcome markets, a specific address's positions/trades/balances, weekend trading of TradFi markets, tokenized spot stocks, perp positioning, or gossip-network peers, answered through the flowscan MCP server's tools.
----
 
 # Flowscan (Hyperliquid explorer) via MCP
 
@@ -26,7 +22,6 @@ Flowscan (www.flowscan.xyz) is a Hyperliquid explorer. It has nothing to do with
 - Funding, fills and orders: use the totals block, not the rows. Funding: `totals.netUsdc` / `paidUsdc` / `receivedUsdc` and `totals.byCoin` (`netUsdc > 0` means received). Fills: `totals.count`, `closedPnlUsdc`, `feesUsdc`, `volumeUsd`, `byCoin`. Historical orders: `count` and `countsByStatus` (filled, canceled, ...). These cover every matched row in `coveredRange`, not just the page.
 - If the total you need is not in the result, say so, or narrow the query (a `coin`/`market` filter, a date window) or page with `nextStartTime` until you have it. Do not approximate.
 - Copy addresses, ids and symbols exactly from tool output. Do not abbreviate an address unless the tool did; if you shorten one for a table, take the first and last characters from the actual string.
-- Transaction hashes (66 characters) may be abbreviated in prose and tables as the first 10 and last 6 characters (0x38828c58...22900e). Give the full hash only when the user asks for it or needs to look it up.
 - Always state the date range (UTC) or snapshot time the figures cover.
 
 ## Picking a tool
@@ -140,3 +135,5 @@ cp -r skills/flowscan ~/.claude/skills/
 ```
 
 The skill only helps if the `flowscan` MCP server is also configured; see the README for client setup.
+
+Answer the user's question using the flowscan tools. If the data is not available from Flowscan, say so plainly. Be concise and state the source and date range.

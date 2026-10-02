@@ -71,7 +71,7 @@ export function registerBuilderTools(server: McpServer): void {
     {
       title: "Builders leaderboard (revenue, volume, users by window)",
       description:
-        "The /builders 'Builder Arena' table: ~1800 builders ranked by one metric over a FIXED window (1d/7d/30d/90d/all_time): revenue (USD), volume (USD), new_users, total_users or avg_revenue_per_user_all_time (the last two all-time only). Compact rows: rank, id, name, category, value, that metric's windows (incl. prev_* periods), all-time revenue, total users; `full: true` for every metric. Slug ids ('pvp') for well-known builders, else the 0x address. Prefer this for rankings across all of Hyperliquid (flowscan_hip3_builders = HIP-3 volume only). For arbitrary ranges like 'last 45 days' use flowscan_builder_revenue; resolve names with flowscan_builder_lookup.",
+        "The /builders 'Builder Arena': ~1800 builders ranked by one metric over a FIXED window (1d/7d/30d/90d/all_time): revenue, volume (USD), new_users, total_users or avg_revenue_per_user_all_time (last two all-time only). Compact rows (rank, id, name, category, value, that metric's windows, all-time revenue, users); full=true for all metrics. For arbitrary ranges like 'last 45 days' use flowscan_builder_revenue; flowscan_hip3_builders ranks by HIP-3 volume only.",
       inputSchema: {
         metric: z.enum(["revenue", "volume", "new_users", "total_users", "avg_revenue_per_user_all_time"]).optional().describe("Sort metric (default revenue)."),
         window: z.enum(["1d", "7d", "30d", "90d", "all_time"]).optional().describe("Default 7d (all-time-only metrics ignore it)."),
@@ -151,7 +151,7 @@ export function registerBuilderTools(server: McpServer): void {
         startDate: DATE_YMD.optional().describe("YYYY-MM-DD UTC, inclusive (default 30 days before endDate)."),
         endDate: DATE_YMD.optional().describe("YYYY-MM-DD UTC, inclusive (default and maximum: yesterday)."),
         builder: z.string().optional().describe("Id or 0x-address substring ('phantom', '0x2a2b'); matchedKeys are listed."),
-        top: z.number().int().min(1).max(200).optional().describe("Without `builder`: keep only the top N builders by revenue over the range (default 20)."),
+        top: z.number().int().min(1).max(200).optional().describe("Top N builders by range revenue (default 20)."),
         fields: shapeInput.fields,
       },
     },
@@ -212,7 +212,7 @@ export function registerBuilderTools(server: McpServer): void {
       description:
         "Resolve a builder name to its id/address. Names can be ambiguous (e.g. two 'fomo' builders); call this first, then pass the exact id/address to flowscan_builder_revenue or flowscan_builder_dashboard (as `address` or 'id:<id>'). If multiple strong matches exist, show them to the user. Matches id, name and address (case-insensitive); exact matches first, then substrings, by all-time revenue. Each match: id, name, category, address, revenue and volume USD for 1d/7d/30d/90d/all_time, total_users.",
       inputSchema: {
-        query: z.string().min(1).describe("Builder name, id or address (or a substring of one), e.g. 'fomo', 'phantom', '0x2a2b'."),
+        query: z.string().min(1).describe("Name, id or address (substring ok), e.g. 'fomo'."),
         limit: z.number().int().min(1).max(100).optional().describe("Max matches returned (default 20)."),
       },
     },
@@ -242,10 +242,10 @@ export function registerBuilderTools(server: McpServer): void {
     {
       title: "One builder's revenue over any date range (e.g. last 45 days)",
       description:
-        "Total and daily revenue (USD) of ONE builder over any range, e.g. 'revenue in the past 45 days': `days` (ending yesterday UTC, default 30) or startDate/endDate (UTC, inclusive; endDate clamped to yesterday; a future start is an error). `builder`: 0x address (preferred), 'id:<id>' or a name; a name matching several builders returns ambiguous=true with candidates (ask the user). Sums /api/builders/all-daily-revenue and cross-checks the builder dashboard series when the address is known (both totals returned with covered dates, plus volume/fills/traders). Daily rows newest first.",
+        "Total and daily revenue (USD) of ONE builder over any range ('past 45 days'): `days` (complete UTC days ending yesterday, default 30) or startDate/endDate (end clamped to yesterday; future start = error). `builder`: 0x address (preferred), 'id:<id>' or a name; ambiguous names return candidates (ask the user). Sums /api/builders/all-daily-revenue, cross-checked with the dashboard series when the address is known (both totals + covered dates, volume/fills/traders). Daily rows newest first.",
       inputSchema: {
-        builder: z.string().min(1).describe("0x builder address (preferred), 'id:<id>' (e.g. 'id:pvp'), or a name resolved if unambiguous."),
-        days: z.number().int().min(1).max(366).optional().describe("Number of days ending yesterday (UTC). Default 30. Ignored if startDate is given."),
+        builder: z.string().min(1).describe("0x address (preferred), 'id:<id>' or a name."),
+        days: z.number().int().min(1).max(366).optional().describe("Days ending yesterday UTC (default 30)."),
         startDate: DATE_YMD.optional().describe("YYYY-MM-DD (inclusive)."),
         endDate: DATE_YMD.optional().describe("YYYY-MM-DD (inclusive, default yesterday)."),
         limit: z.number().int().min(1).max(400).optional().describe("Max daily rows returned (default 60, newest first)."),
@@ -506,7 +506,7 @@ export function registerBuilderTools(server: McpServer): void {
     {
       title: "Builder Intelligence: builders & categories",
       description:
-        "The /builder-intelligence index: ~120 analysed builders (id, name, category, total/active users, all-time revenue and volume USD, 7d new users) and the categories (id, name, builder count, users, revenue). Feed ids to flowscan_builder_intelligence_detail and category ids to flowscan_builder_intelligence_summary. Prefer this for user-status/retention questions; for rankings over all builders use flowscan_builders_leaderboard. '7d new users' here, in the leaderboard and in flowscan_builders_user_series come from different datasets and can differ; say which you quote.",
+        "The /builder-intelligence index: ~120 analysed builders (id, name, category, total/active users, all-time revenue/volume USD, 7d new users) and categories. Ids feed flowscan_builder_intelligence_detail, category ids flowscan_builder_intelligence_summary. Prefer this for user-status/retention questions. Its '7d new users' comes from a different dataset than the leaderboard's and user_series'; say which you quote.",
       inputSchema: {
         search: z.string().optional(),
         category: z.string().optional().describe("Filter by category id/name substring."),

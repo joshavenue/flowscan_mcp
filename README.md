@@ -161,7 +161,7 @@ All 44 tools are read-only (annotated `readOnlyHint`). Required parameters are i
 | --- | --- | --- |
 | `flowscan_stablecoin_margin` | "Stablecoin Perp Margin" panel: stablecoin value on HyperCore split into spot balances and perp margin, overall and per token (USDC, USDT, USDE, USDH): balances, holders/traders, average/median, total value, market share. USD. | fields |
 | `flowscan_perp_markets` | Perp positioning snapshot for every perp market (about 330, including HIP-3 markets like `xyz:TSLA`): long/short counts and notional, ratios, open interest, average entry, median leverage, unique addresses, `snapshotIso`/`snapshotAgeSeconds`. | `market`, `sortBy` (default `openInterest`), fields/limit/offset (default 60) |
-| `flowscan_perp_positions` | Open positions in one market, largest first: address, signed size, notional, side, entry, leverage, liquidation price, account value, funding PnL, all-time PnL, size change since the previous snapshot; `total`/`totalPages`, `snapshotIso`/`snapshotAgeSeconds` and a summary of the filtered set. A bare HIP-3 symbol (`TSLA`) resolves to `xyz:TSLA` when unique; otherwise the error lists candidates. | **`market`** (case-insensitive), `side`, `sort` (`notional` default, `size`), `dir`, `minSize`/`maxSize`, `minNotional`/`maxNotional`, `minEntry`/`maxEntry`, `minLiq`/`maxLiq`, `minReturn`/`maxReturn`, `markPx`, `limit` (default 50, max 200), `page` (1-based), fields |
+| `flowscan_perp_positions` | Open positions in one market, largest first: address, signed size, notional, side, entry, leverage, liquidation price, account value, funding PnL, all-time PnL, size change since the previous snapshot; `total`/`totalPages`, `snapshotIso`/`snapshotAgeSeconds`; `marketSummary` (whole market, unfiltered: long/short counts and notional, OI, median leverage, average entry) and `filteredSideSummary` (only the rows matching the filters, with the applied `filter`). A bare HIP-3 symbol (`TSLA`) resolves to `xyz:TSLA` when unique; otherwise the error lists candidates. | **`market`** (case-insensitive), `side`, `sort` (`notional` default, `size`), `dir`, `minSize`/`maxSize`, `minNotional`/`maxNotional`, `minEntry`/`maxEntry`, `minLiq`/`maxLiq`, `minReturn`/`maxReturn`, `markPx`, `limit` (default 50, max 200), `page` (1-based), fields |
 | `flowscan_address_perp_positions` | One address's open perp positions across all markets (including HIP-3) from the latest snapshot, sorted by notional, with `totalNotional` and `totalPositions`. | **`address`**, `market`, `side`, fields/limit/offset (default 50) |
 
 `openInterest` in the perp snapshot (and OI in the HIP-3 tools) is Flowscan's two-sided figure: long notional + short notional. That is twice the one-sided OI some other interfaces show. The homepage "24h Revenue" card is served by the revenue tools below.
@@ -170,9 +170,9 @@ All 44 tools are read-only (annotated `readOnlyHint`). Required parameters are i
 
 | Tool | Returns | Key params |
 | --- | --- | --- |
-| `flowscan_revenue_hypercore_fees` | One row per UTC day, oldest first: `nativeHypercoreFee` (non-HIP-3 markets) and `hip3HypercoreFee` (HIP-3 markets), USDC, plus `rangeTotals`. History starts 2026-03. Today's row has `partial: true`. | `days` (default 90 without a range), or `startDate`/`endDate` (YYYY-MM-DD), or `startTime`/`endTime` (Unix ms), fields/limit/offset (default 400) |
-| `flowscan_revenue_deployer_fees` | Daily HIP-3 deployer fees (`totalFee`) with `byDex` per on-chain DEX name, plus `rangeTotals` (overall and per DEX). With `dex`, rows also have `dexTotalFee` and `allDexTotalFee`. USDC. Paid to deployers, not protocol revenue. | `days` (default 90), or `startDate`/`endDate`, or `startTime`/`endTime`, `dex` (on-chain name like `xyz`, or display name like `KM`), fields/limit/offset (default 400) |
-| `flowscan_revenue_priority_gas` | Daily write/read priority gas (`totalGas` in HYPE, `count`), `rangeTotals`, optionally the top 5 gas-paying users per day. Today's row has `partial: true`. | `days` (default 90), or `startDate`/`endDate`, or `startTime`/`endTime`, `includeTopUsers` (default false), fields/limit/offset (default 400) |
+| `flowscan_revenue_hypercore_fees` | One row per UTC day, oldest first: `nativeHypercoreFee` (non-HIP-3 markets) and `hip3HypercoreFee` (HIP-3 markets), USDC, plus `rangeTotals`. History starts 2026-03. Today's row (only with `includeToday`, or an explicit range that reaches today) has `partial: true`. | `days` (last N complete UTC days ending yesterday, default 90), or `startDate`/`endDate`, or `startTime`/`endTime` (Unix ms), `includeToday` (append today's partial row), fields/limit/offset (default 400) |
+| `flowscan_revenue_deployer_fees` | Daily HIP-3 deployer fees (`totalFee`) with `byDex` per on-chain DEX name, plus `rangeTotals` (overall and per DEX). With `dex`, rows also have `dexTotalFee` and `allDexTotalFee`. USDC. Paid to deployers, not protocol revenue. | `days` (last N complete UTC days ending yesterday, default 90), or `startDate`/`endDate`, or `startTime`/`endTime` (Unix ms), `includeToday` (append today's partial row), `dex` (on-chain name like `xyz`, or display name like `KM`), fields/limit/offset (default 400) |
+| `flowscan_revenue_priority_gas` | Daily write/read priority gas (`totalGas` in HYPE, `count`), `rangeTotals`, optionally the top 5 gas-paying users per day. | `days` (last N complete UTC days ending yesterday, default 90), or `startDate`/`endDate`, or `startTime`/`endTime` (Unix ms), `includeToday` (append today's partial row), `includeTopUsers` (default false), fields/limit/offset (default 400) |
 | `flowscan_revenue_summary` | For the last 1, 7 and 30 complete UTC days: native fees, HIP-3 fees, their sum `totalUsdcExcludingGas`, deployer fees (USDC) and priority gas (HYPE); the current partial day separately; annualized run-rate from the trailing 7 days; a note on how Flowscan's headline figure is built. Computed by this server from the three series above. | fields |
 
 Flowscan's headline "Combined" revenue is native HyperCore fees + HIP-3 HyperCore fees + priority gas converted at the live HYPE price. Deployer fees are not part of it. Flowscan's routes do not expose the HYPE price and this server does not fetch it, so gas is reported in HYPE and the USDC part is `totalUsdcExcludingGas`.
@@ -182,14 +182,14 @@ Flowscan's headline "Combined" revenue is native HyperCore fees + HIP-3 HyperCor
 | Tool | Returns | Key params |
 | --- | --- | --- |
 | `flowscan_address_summary` | Account role (user/vault/subAccount/agent/missing), lifetime PnL summary (PnL, win rate, trades, hold time, volume, fees, funding, days active, `tradedPairs` as `{count, first30}`), live perp state (account value, notional, margin, withdrawable, positions with size, entry, leverage, liquidation, uPnL, ROE, funding; largest first) and non-zero spot balances. | **`address`**, `include` (any of `role`, `pnlSummary`, `perpState`, `spotBalances`; default all), `dex` (HIP-3 DEX for perp state, display name or prefix; unknown names are rejected; default main DEX), `positionsLimit` (default 50), `balancesLimit` (default 50), fields |
-| `flowscan_address_orders` | `open`: resting orders on every DEX. `openDetailed`: main-DEX orders with trigger/TP-SL/reduce-only/TIF details (upstream max 100, then `capped`). `historical`: the newest ~2000 orders with final status, with `coveredRange`/`capped`. | **`address`**, `kind` (`open` default, `openDetailed`, `historical`), `coin`, fields/limit/offset (default 100; 50 for `historical`) |
-| `flowscan_address_fills` | Fills, newest first: coin, price, size, side, direction, start position, closed PnL, fee, tx hash, oid, time. Without `startTime`: the most recent ~2000. With `startTime`: the oldest 2000 from that time; `capped`, `coveredRange`, and when capped `nextStartTime` + `capNote`. | **`address`**, `startTime`, `endTime` (Unix ms), `aggregateByTime` (default true), `coin`, fields/limit/offset (default 100) |
-| `flowscan_address_ledger` | `ledger`: deposits, withdrawals, transfers, vault flows, liquidations. `funding`: hourly funding payments. Newest first, same `capped`/`coveredRange`/`nextStartTime` handling as fills. | **`address`**, `kind` (`ledger` default, `funding`), `startTime` (default 30 days ago for ledger, 7 days for funding), `endTime`, `coin`, fields/limit/offset (default 100) |
+| `flowscan_address_orders` | `open`: resting orders on every DEX. `openDetailed`: main-DEX orders with trigger/TP-SL/reduce-only/TIF details (upstream max 100, then `capped`). `historical`: the newest ~2000 orders with final status, `countsByStatus` over all of them, and `coveredRange`/`capped`. Always `count` of matching orders; times have ISO twins. | **`address`**, `kind` (`open` default, `openDetailed`, `historical`), `coin`, fields/limit/offset (default 100 for `open`, 50 otherwise) |
+| `flowscan_address_fills` | Fills, newest first: coin, price, size, side, direction, closed PnL, fee, tx hash, time and `timeIso`. `totals` over ALL matched fills in `coveredRange` (not just the page): `count`, `closedPnlUsdc`, `feesUsdc`, `feesByToken`, `volumeUsd` (px x sz), `byCoin`. Without `startTime`: the latest ~2000 fills. With `startTime`: follows pages past the upstream 2000-row cap (up to `maxPages`); if still `capped`, `nextStartTime` + `capNote`. | **`address`**, `startTime`, `endTime` (Unix ms), `aggregateByTime` (default true), `coin` (applied before totals), `maxPages` (default 5, max 10), fields/limit/offset (default 50) |
+| `flowscan_address_ledger` | Newest first, rows with `timeIso`. `ledger`: deposits, withdrawals, sends, transfers, vault and staking moves; `totals.byType` `{count, sumUsdc, inUsdc, outUsdc}`. `funding`: hourly payments; `totals` `{count, netUsdc, paidUsdc, receivedUsdc, byCoin}` (netUsdc > 0 means received). Totals cover ALL matched rows in `coveredRange`. Same `maxPages`/`capped`/`nextStartTime` handling as fills. | **`address`**, `kind` (`ledger` default, `funding`), `startTime` (default 30 days ago for ledger, 7 days for funding), `endTime`, `coin` (applied before totals), `maxPages` (default 5, max 10), fields/limit/offset (default 50 for ledger, 100 for funding) |
 | `flowscan_address_staking` | `totalDelegatedHype`, `validatorCount`, delegations `{validator, validatorName, commission_bps, is_jailed, amountHype, lockedUntil, lockedUntilIso}` and staking history, newest first. | **`address`**, `historyLimit` (default 50, max 500), fields |
 | `flowscan_address_vaults_subaccounts` | Vault equities (vault, equity, lock-up) and sub-accounts (name, address, account value, notional, withdrawable, open positions, non-zero spot balances). | **`address`**, fields |
 | `flowscan_address_extras` | Smaller widgets: approved builders (with max fee), HyperCore borrow/lend state and health, API rate limit, TWAP slice fills. | **`address`**, **`kind`** (`approvedBuilders`, `borrowLend`, `rateLimit`, `twapSliceFills`), fields/limit/offset (default 100 for lists) |
 
-`flowscan_address_perp_positions` (homepage section) also takes an address. For orders, fills and ledger, `paging.rowsReturned` counts the rows in the (possibly capped) upstream response, not every row in the period.
+`flowscan_address_perp_positions` (homepage section) also takes an address. For orders, fills and ledger, quote `count`, `countsByStatus` and `totals` rather than adding rows; `paging.rowsReturned` counts the rows in the (possibly capped) upstream response, not every row in the period.
 
 ### Staking (`/validators`)
 
@@ -203,16 +203,16 @@ Flowscan's headline "Combined" revenue is native HyperCore fees + HIP-3 HyperCor
 
 | Tool | Returns | Key params |
 | --- | --- | --- |
-| `flowscan_peers` | Crawl of the Hyperliquid gossip network (about 600 nodes). Default: meta (crawl time, counts, reachability, states), footprint (top countries, ASNs) and sentries. `nodes`, `edges` and `all` are paged (`all` returns `nodesPaging`/`edgesPaging`). | `section` (`summary` default, `nodes`, `edges`, `all`), `country` (exact ISO code like `JP` or exact name like `Japan`), `state` (`syncing`, `full`, `unreachable`, `no_resp`, `other`), `role` (`hub`, `sentry`, `fringe`, `private`, `scraper`), `operator`, `nodeId`, fields/limit/offset (default 50 nodes, 500 edges; 50 nodes and 200 edges with `all`) |
+| `flowscan_peers` | Crawl of the Hyperliquid gossip network (about 600 nodes). Default: meta (crawl time, counts, reachability, states), footprint (top countries, ASNs) and sentries. `nodes`, `edges` and `all` are paged (`all` returns `nodesPaging`/`edgesPaging`). | `section` (`summary` default, `nodes`, `edges`, `all`), `country` (exact ISO code like `JP` or exact name like `Japan`), `state` (`syncing`, `full`, `unreachable`, `no_resp`, `other`), `role` (`hub`, `sentry`, `fringe`, `private`, `scraper`), `operator`, `nodeId`, fields/limit/offset (default 50 nodes, 500 edges; 30 nodes and 100 edges with `all`) |
 
 ### HIP-3 perp DEXs (`/hip-3`)
 
 | Tool | Returns | Key params |
 | --- | --- | --- |
 | `flowscan_hip3_overview` | Totals across all HIP-3 DEXs (volume all-time/30d/90d, trades, traders, new users, OI), per-DEX and per-collateral market share, DEX list with collateral, builder-routed share of volume (top 3 builders per DEX), and `dexAliases`. | fields |
-| `flowscan_hip3_daily` | Daily series per DEX for one metric, with `lastDayPartial` + `partialNote` when the last date is today. | `metric` (`volume` default, `trades`, `traders`, `new_users`, `oi`, `oi_by_market`, `collateral_traders`, `collateral_oi`), `dex` (display name or prefix), `days` (default 30), fields |
+| `flowscan_hip3_daily` | Daily values per DEX for one metric as dated rows `[{date, XYZ: v, KM: v, ...}]` (today's row flagged partial), with `lastDayPartial`/`partialNote`. `raw: true` returns the positional `{dates, series}` form instead. | `metric` (`volume` default, `trades`, `traders`, `new_users`, `oi`, `oi_by_market`, `collateral_traders`, `collateral_oi`), `dex` (display name or prefix), `days` (default 30, may include today), `raw`, fields |
 | `flowscan_hip3_markets` | All HIP-3 markets (dex, symbol, canonical underlying, asset class). With `symbol`: per listing DEX the OI, DAU, volume, spread, slippage, plus OI/DAU history trimmed to `days`. | `symbol`, `dex`, `assetClass`, `search`, `days` (default 30), fields/limit/offset (default 100) |
-| `flowscan_hip3_dex` | One DEX: collateral, totals, every market with all-time volume, traders and current OI (sorted by volume), daily totals with `lastDayPartial`. Unknown DEX names are an error that lists the valid ones. | **`dex`** (display name or prefix, case-insensitive), `days` (default 30), `includeMarketDaily`, `search`, fields/limit/offset (default 50) |
+| `flowscan_hip3_dex` | One DEX: collateral, totals, every market with all-time volume, traders and current OI (sorted by volume), dated daily-total rows (today flagged partial). Unknown DEX names are an error that lists the valid ones. | **`dex`** (display name or prefix, case-insensitive), `days` (default 30), `includeMarketDaily`, `search`, fields/limit/offset (default 50) |
 | `flowscan_hip3_builders` | Share of HIP-3 volume routed through builder codes, per-DEX builder volume with top builders, and 800+ builders ranked by HIP-3 volume only. | `search`, `window` (`total` default, `30d`, `90d`), `dex` (rank by volume on one DEX), `includePerDex`, fields/limit/offset (default 50) |
 | `flowscan_hip3_binance_comparison` | About 240 real-world-asset symbols with the matching Binance USDT-M futures: Binance OI, 24h volume, last price. With `symbol`: Binance daily history (trimmed to `days`) and the HIP-3 side per DEX (OI, DAU, volume, spread, slippage). | `symbol`, `underlyingType` (`EQUITY`, `HK_EQUITY`, `KR_EQUITY`, `CN_EQUITY`, `COMMODITY`, `INDEX`, `FX`, `PREMARKET`), `sortBy` (`oi` default, `volume24h`, `lastPrice`), `days` (default 30), fields/limit/offset (default 50) |
 
@@ -220,7 +220,7 @@ Flowscan's headline "Combined" revenue is native HyperCore fees + HIP-3 HyperCor
 
 | Tool | Returns | Key params |
 | --- | --- | --- |
-| `flowscan_hip4_markets` | `active` (about 250): YES/NO outcomes with outcomeId, asset ids, market type, underlying/target/expiry, `yesMark`/`noMark` (0 to 1, implied probability), `yesPrevDayPx`, `noPrevDayPx`, `yesDayNtlVlm`, volume, deployer, question link. `settled`: resolved outcomes. `questions`: question groups. `all`: all three. | `section` (`active` default, `settled`, `questions`, `all`), `search`, `category`, `settledLimit` (default 100), `includeContexts` (full spot contexts, default false), fields/limit/offset (default 20; 10 per list with `all`) |
+| `flowscan_hip4_markets` | `active`: slim rows (outcomeId, name, market type, asset ids, underlying/target/expiry, `yesMark`/`noMark` = implied probability 0 to 1, `yesChange24h`, `volume24h`, `totalVolume`, deployer, question), sorted by `sortBy`. `settled`: resolved outcomes. `questions`: question groups. `all`: all three. `full: true` for complete rows (descriptions, prev-day prices). | `section` (`active` default, `settled`, `questions`, `all`), `search`, `category`, `sortBy` (`volume24h` default, `totalVolume`, `yesMark`, `change24h`), `order` (`desc` default, `asc`), `full`, `includeContexts` (with `full`: raw spot contexts), `settledLimit` (default 100), fields/limit/offset (default 20; 10 per list with `all`) |
 | `flowscan_hip4_outcome` | YES and NO candles for one outcome (`[openTime, open, high, low, close, volume, trades]`), per-side trade stats, and the settlement record for settled outcomes. | **`outcomeId`**, `yesAssetId`/`noAssetId` (default `#<outcomeId>0` / `#<outcomeId>1`; `#` is added if missing), `interval` (`1m`, `5m`, `15m`, `1h` default, `4h`, `1d`), `days` (default 7, max 90), `settled`, fields |
 | `flowscan_hip4_labels` | Readable labels for HIP-4 asset ids such as `#14730`. | **`assets`** (1 to 100 ids) |
 
@@ -228,7 +228,7 @@ Flowscan's headline "Combined" revenue is native HyperCore fees + HIP-3 HyperCor
 
 | Tool | Returns | Key params |
 | --- | --- | --- |
-| `flowscan_spot_stocks` | Tokenized stocks on spot (xStocks, Dinari). `current`: summary and per-token price, supply, volume, holders, traders, value, depth. `timeseries`: daily volume/holders/traders/value. `liquidity`: latest depth within 2/5/10/25 bps of mid (cumulative buckets, plus a 25-500 bps band) in tokens and as `latestDepthUsd`, with a sampled history when `token` or `days` is given. `topHolders`: largest holders per token. | `section` (`current` default, `timeseries`, `liquidity`, `topHolders`), `token`, `days` (timeseries default 30; liquidity history default 1 with `token`), fields/limit/offset (top holders: default 25 per token with `token`, 10 without) |
+| `flowscan_spot_stocks` | Tokenized stocks on Hyperliquid spot: xStocks NVDAX, SPYX, QQQX, SKHYX, MUX, SNDKX, SPCXX, TSLAX, AAPLX, CRCLX and Dinari SPCXD. `current`: summary and per-token price, 24h/all-time volume, holders, traders, value, depth. `timeseries`: daily volume/holders/traders/value per token. `liquidity`: cumulative depth within 2/5/10/25 bps of mid in tokens and USD (`latestDepthUsd`), with a sampled history when `token` or `days` is given. `topHolders`: largest holders per token. | `section` (`current` default, `timeseries`, `liquidity`, `topHolders`), `token` (ticker or underlying substring, e.g. `MUX`, `NVDA`), `days` (timeseries default 30; liquidity history default 1 with `token`), fields/limit/offset (top holders: default 25 per token with `token`, 10 without) |
 
 ### Weekend trading (`/weekend-trading`)
 
@@ -299,16 +299,18 @@ Several Flowscan routes return megabytes of JSON. Tool results are shaped so the
 
 `source` is the Flowscan route the data came from. For POST routes it is the route path only, without the request body (such as `{type: "hypercoreFeeSummary"}`). Some tools add other top-level keys such as `units`, `kind`, `window`, `capped`, `coveredRange`, `nextStartTime` or `note`. `flowscan_coverage` returns the coverage map directly, without the envelope.
 
-**`fields`.** A list of keys or dotted paths of `data` to keep, for example `["summary", "by_token.USDC"]`. Everything else in `data` is dropped. When `data` is a list of rows (revenue series, orders, fills, ledger), `fields` applies to each row.
+**`fields`.** A list of keys or dotted paths to keep, relative to `data`, for example `["summary", "by_token.USDC"]`. A leading `data.` is accepted and stripped. Everything else in `data` is dropped. When `data` is a list of rows (revenue series, orders, fills, ledger), paths are relative to each row (`delta.usdc`, not `data.delta.usdc`). A path that matches nothing is never silent: the result gets `_fieldsNotFound` (the paths that missed) and `_availableFields` (the keys that do exist, from `data` or its first row), so a typo cannot be mistaken for "no data".
 
 **`limit` / `offset`.** Page through the tool's main list. Each tool has its own default page size (see the tools table). `paging.hasMore` tells you whether there is more. The address orders, fills and ledger tools report `paging.rowsReturned` instead of `paging.total`, because the upstream response may itself be capped. Some tools have a `limit` with a different meaning, such as the number of positions or events Flowscan returns; their descriptions say so.
 
-**Size cap.** If the serialized result is longer than `FLOWSCAN_MAX_RESULT_CHARS` (default 60,000 characters), the server shortens the largest lists (keeping their first items) until it fits, and the result stays valid JSON. It then carries two extra top-level keys:
+**Totals.** Tools that return many rows also return totals computed over every matched row, not just the current page: `rangeTotals` (revenue series), `totals` (fills, ledger and funding), `count`/`countsByStatus` (orders), `marketSummary`/`filteredSideSummary` (positions). Quote these instead of adding rows.
+
+**Size cap.** If the serialized result is longer than `FLOWSCAN_MAX_RESULT_CHARS` (default 40,000 characters; dense JSON results of about 51,000 characters were too large for Claude Code's MCP output limit in the eval below), the server shortens the largest lists (keeping their first items) until it fits, and the result stays valid JSON. It then carries two extra top-level keys:
 
 ```json
 {
   "_truncated": [{ "path": "data.markets", "originalLength": 330, "kept": 120 }],
-  "_truncatedNote": "[TRUNCATED: response was 152345 chars; the lists in _truncated were shortened to their first items to stay under 60000. Use `fields`, `limit`/`offset` or a narrower query for the rest.]"
+  "_truncatedNote": "[TRUNCATED: response was 152345 chars; the lists in _truncated were shortened to their first items to stay under 40000. Use `fields`, `limit`/`offset` or a narrower query for the rest.]"
 }
 ```
 
@@ -337,7 +339,7 @@ All are optional.
 | `FLOWSCAN_MAX_CONCURRENCY` | `4` | Maximum simultaneous requests to Flowscan. Extra calls wait. |
 | `FLOWSCAN_CACHE_TTL_MS` | `20000` | In-memory cache lifetime for ordinary responses. Identical requests within this window reuse the cached result. |
 | `FLOWSCAN_LONG_CACHE_TTL_MS` | `300000` | Cache lifetime for large, slow-changing payloads (HIP-3 snapshot, per-DEX and builder stats, Binance comparison, builders leaderboard and all-time summary, builders user series, builder intelligence). |
-| `FLOWSCAN_MAX_RESULT_CHARS` | `60000` | Maximum characters in one tool result before truncation. |
+| `FLOWSCAN_MAX_RESULT_CHARS` | `40000` | Maximum characters in one tool result before lists are shortened (see [Size cap](#output-shaping)). Raising it can make results too large for some MCP clients. |
 
 ## Not covered
 
@@ -358,13 +360,21 @@ Some prices are available because Flowscan serves them: entry and liquidation pr
 
 For anything in the list above, open the page on flowscan.xyz in a browser or use a separate Hyperliquid tool.
 
+## Dates and windows
+
+- All days are UTC.
+- `days: N` means the last N complete UTC days, ending yesterday, in the revenue series tools (`flowscan_revenue_hypercore_fees`, `_deployer_fees`, `_priority_gas`) and `flowscan_builder_revenue`. The `flowscan_revenue_summary` windows, the `flowscan_builders_daily_revenue` default range and the `flowscan_builder_dashboard` windows also end yesterday. Today's partial row is only added to the revenue series with `includeToday: true` (or an explicit range that reaches today), and is flagged `partial: true`.
+- The HIP-3 series (`flowscan_hip3_daily`, `flowscan_hip3_dex`) end at Flowscan's latest date, which can be today; `lastDayPartial` and the row's `partial` flag say so.
+- Builder date ranges are checked before any request: a start date in the future, or after the end date, is an error, and an end date of today or later is clamped to yesterday with a note.
+- Results state the range they cover (`rangeTotals`, `range`, `windows[].from`/`to`, `coveredRange`). Quote it with the figure.
+
 ## Data freshness
 
 Data is as fresh as Flowscan's own backend, plus this server's cache:
 
 - Perp positioning snapshot (`flowscan_perp_*`, `flowscan_address_perp_positions`): refreshed by Flowscan every few minutes. The perp tools return `snapshotIso` and `snapshotAgeSeconds`.
 - Address tools: live account state as Flowscan serves it at request time.
-- Revenue series: one row per UTC day. Today's row is still accumulating and has `partial: true`; `flowscan_revenue_summary` reports complete days separately from the partial current day.
+- Revenue series: one row per UTC day, complete days by default (see [Dates and windows](#dates-and-windows)); `flowscan_revenue_summary` reports the partial current day separately.
 - HIP-3 daily series: `lastDayPartial` is true when the last date is today (UTC).
 - Builder revenue and dashboard: daily, ending yesterday (UTC). The dashboard routes only have data from mid-2026 on.
 - Peers: an hourly network crawl. `meta.crawledAt` says when.
@@ -372,6 +382,13 @@ Data is as fresh as Flowscan's own backend, plus this server's cache:
 - HIP-3, HIP-4 and builder payloads carry their own `generated_at` / `generatedAt` where Flowscan provides one.
 
 This server caches responses in memory for 20 seconds (60 seconds for the HIP-4 market list, 5 minutes for the large payloads listed under `FLOWSCAN_LONG_CACHE_TTL_MS`). Restarting the server clears the cache.
+
+## Evaluation
+
+The tools and the skill were tested with a model-in-the-loop eval: 220 natural-language prompts (revenue, builders, addresses, staking, HIP-3, HIP-4, spot stocks, weekend trading, perps, not-served, out-of-scope and adversarial requests) answered by a Sonnet agent in Claude Code that had only this server's tools and the skill, then graded by an Opus judge against a rubric, the tool results and directly computed ground truth. Before this round of fixes it scored 197 PASS (89.5%), 20 PARTIAL and 3 FAIL, and all 362 outbound requests went to www.flowscan.xyz. The failures drove the changes above: the lower result cap, server-side totals, `_fieldsNotFound`, ISO timestamps on rows, dated HIP-3 rows, `filteredSideSummary`/`marketSummary`, spot-stock tickers in the tool description, and the skill's rules on arithmetic, made-up numbers and other hosts.
+
+- Report of the first run, with failure analysis: [docs/eval-2026-10-02.md](docs/eval-2026-10-02.md)
+- Harness, prompts and how to re-run it: [scripts/eval/README.md](scripts/eval/README.md)
 
 ## Development
 
@@ -399,6 +416,7 @@ Layout:
 - `test/`: offline unit tests (`npm test`)
 - `scripts/smoke.ts`: live smoke test that calls every tool
 - `scripts/qa/`: live agent-style scenario harness (see `scripts/qa/README.md`)
+- `scripts/eval/`: model-in-the-loop eval with a real agent and a judge (see `scripts/eval/README.md`)
 
 ## License
 

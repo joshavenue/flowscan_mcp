@@ -30,6 +30,17 @@ function trimNested(obj: Rec, n: number): Rec {
 const partialNote = (dates: unknown[]): Rec =>
   dates.at(-1) === todayUtc() ? { lastDayPartial: true, partialNote: `The last date (${todayUtc()}) is the current UTC day and still accumulating.` } : { lastDayPartial: false };
 
+/** Zip positional series into dated rows: [{date, A: a[i], B: b[i]}]; today's row is flagged partial. */
+function toRows(dates: string[], cols: Record<string, unknown>): Rec[] {
+  const today = todayUtc();
+  return dates.map((date, i) => {
+    const row: Rec = { date };
+    for (const [k, arr] of Object.entries(cols)) if (Array.isArray(arr)) row[k] = arr[i] ?? null;
+    if (date === today) row.partial = true;
+    return row;
+  });
+}
+
 /** Convert {dates:[], series:{DEX:[...]}} into recent rows. */
 function tailSeries(block: Rec, days: number, dexFilter?: string): Rec {
   const dates = ((block.dates as string[]) ?? []).slice(-days);
@@ -67,7 +78,7 @@ export function registerHip3Tools(server: McpServer): void {
     {
       title: "HIP-3 perp DEXs overview & market share",
       description:
-        "The /hip-3 headline: totals across HIP-3 perp DEXs (volume all-time/30d/90d, trades, traders, new users, OI), per-DEX and per-collateral market share, DEX list with collateral, builder-routed share of volume (top 3 builders per DEX), and dexAliases mapping display names to on-chain prefixes (KM=mkts, Paragon=para, Entropy=io, Hyena=hyna, Dreamcash=cash, ...). OI is two-sided (long + short notional). Prefer this for DEX-level totals and market share.",
+        "The /hip-3 headline: HIP-3 totals (volume all-time/30d/90d, trades, traders, new users, OI), per-DEX and per-collateral market share, collateral per DEX, builder-routed share (top 3 per DEX), and dexAliases (display name -> on-chain prefix, e.g. KM=mkts, Paragon=para, Entropy=io). OI is two-sided (long + short). Prefer this for DEX-level totals and share.",
       inputSchema: { fields: shapeInput.fields },
     },
     async (args) => {
@@ -93,11 +104,12 @@ export function registerHip3Tools(server: McpServer): void {
     {
       title: "HIP-3 daily time series (volume, trades, traders, new users, OI)",
       description:
-        "HIP-3 page charts: a daily series per DEX. metric: volume, trades, traders, new_users, oi, oi_by_market (top markets), collateral_traders, collateral_oi. Returns the last N days (default 30); lastDayPartial flags when the last date is the current, still-accumulating UTC day. `dex` takes a display name or on-chain prefix.",
+        "HIP-3 page charts: daily values per DEX as dated rows [{date, XYZ: v, KM: v, ...}] (raw=true for positional {dates, series}). metric: volume, trades, traders, new_users, oi, oi_by_market (top markets), collateral_traders, collateral_oi. Returns the last N days (default 30); lastDayPartial flags when the last date is the current, still-accumulating UTC day. `dex` takes a display name or on-chain prefix.",
       inputSchema: {
         metric: z.enum(["volume", "trades", "traders", "new_users", "oi", "oi_by_market", "collateral_traders", "collateral_oi"]).optional().describe("Default volume."),
         dex: z.string().optional().describe("Only this DEX (display name like 'XYZ'/'KM' or on-chain prefix like 'mkts')."),
         days: z.number().int().min(1).max(400).optional().describe("Default 30."),
+        raw: z.boolean().optional().describe("Positional {dates, series} instead of rows."),
         fields: shapeInput.fields,
       },
     },
@@ -106,7 +118,11 @@ export function registerHip3Tools(server: McpServer): void {
       const metric = args.metric ?? "volume";
       const key = `daily_${metric}`;
       const block = (d[key] as Rec) ?? {};
-      const out = tailSeries(block, args.days ?? 30, args.dex);
+      const series = tailSeries(block, args.days ?? 30, args.dex);
+      const { dates, series: byName, ...flags } = series as { dates: string[]; series: Record<string, unknown[]> } & Rec;
+      const out: Rec = args.raw
+        ? { ...series }
+        : { ...flags, columns: Object.keys(byName), rows: toRows(dates, byName) };
       if (block.markets) out.markets = block.markets;
       return result(envelope("/api/dex-stats/snapshot", pick(out, args.fields), { metric }));
     },
@@ -157,9 +173,9 @@ export function registerHip3Tools(server: McpServer): void {
     {
       title: "One HIP-3 DEX: totals, markets, daily totals",
       description:
-        "HIP-3 per-DEX tab: collateral, total volume/trades/traders/OI, every market with all-time volume, traders and current two-sided OI (sorted by volume), and daily totals for the last N days (lastDayPartial flags today). `dex`: display name or prefix ('mkts' = KM). Prefer this for one DEX's market list.",
+        "HIP-3 per-DEX tab: collateral, total volume/trades/traders/OI, every market with all-time volume, traders and current two-sided OI (sorted by volume), and dated daily-total rows for the last N days (today flagged partial). `dex`: display name or prefix ('mkts' = KM). Prefer this for one DEX's market list.",
       inputSchema: {
-        dex: z.string().describe("DEX display name ('XYZ', 'KM', 'Paragon', ...) or on-chain prefix ('xyz', 'mkts', 'para'), case-insensitive."),
+        dex: z.string().describe("DEX display name ('KM') or prefix ('mkts')."),
         days: z.number().int().min(1).max(400).optional().describe("Daily totals lookback (default 30)."),
         includeMarketDaily: z.boolean().optional().describe("Include each market's own daily series (large; default false)."),
         search: z.string().optional().describe("Filter markets by symbol substring."),
@@ -178,7 +194,9 @@ export function registerHip3Tools(server: McpServer): void {
       if (!args.includeMarketDaily) markets = markets.map(({ daily: _d, ...rest }) => rest);
       const { items, paging } = page(markets, args, 50);
       const dt = (dex.daily_totals as Rec) ?? {};
-      const daily_totals = { ...trimNested(dt, n), ...partialNote(((dt.dates as string[]) ?? []).slice(-n)) };
+      const t = trimNested(dt, n);
+      const { dates: dtDates, ...cols } = t as { dates?: string[] } & Record<string, unknown[]>;
+      const daily_totals = { ...partialNote(dtDates ?? []), rows: toRows(dtDates ?? [], cols) };
       return result(envelope("/api/dex-stats/per-dex", pick({ dex: key, collateral: dex.collateral, total: dex.total, markets: items, daily_totals }, args.fields), { paging }));
     },
   );
@@ -193,7 +211,7 @@ export function registerHip3Tools(server: McpServer): void {
       inputSchema: {
         search: z.string().optional().describe("Filter builders by name/address substring."),
         window: z.enum(["total", "30d", "90d"]).optional().describe("Ranking window (default total = all-time)."),
-        dex: z.string().optional().describe("Rank by volume on this DEX only (e.g. 'XYZ'); builders with none there are dropped."),
+        dex: z.string().optional().describe("Rank by volume on this DEX only."),
         includePerDex: z.boolean().optional().describe("Keep each builder's per_dex breakdown (default false)."),
         ...shapeInput,
       },
@@ -232,7 +250,7 @@ export function registerHip3Tools(server: McpServer): void {
       description:
         "HIP-3 page Binance comparison: ~240 real-world-asset symbols (equities incl. HK/KR/CN, commodities, indices, FX, pre-market) with Binance USDT-M symbol, open interest (USD), 24h volume (USD) and last price. With `symbol`: Binance row, daily Binance OI/volume history and the HIP-3 side per DEX (OI, DAU, volume, spread, slippage). Prefer this when comparing HIP-3 with Binance.",
       inputSchema: {
-        symbol: z.string().optional().describe("Canonical symbol, e.g. 'GOLD', 'TSLA', 'NVDA'. Returns one symbol with history and the HIP-3 side."),
+        symbol: z.string().optional().describe("Canonical symbol ('GOLD', 'TSLA')."),
         underlyingType: z.string().optional().describe("Exact type filter: EQUITY, HK_EQUITY, KR_EQUITY, CN_EQUITY, COMMODITY, INDEX, FX, PREMARKET."),
         sortBy: z.enum(["oi", "volume24h", "lastPrice"]).optional().describe("Default oi desc."),
         days: z.number().int().min(1).max(400).optional().describe("History length for single-symbol lookups (default 30)."),

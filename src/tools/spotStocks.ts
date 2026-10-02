@@ -20,10 +20,10 @@ export function registerSpotStockTools(server: McpServer): void {
     {
       title: "Tokenized stocks on Hyperliquid spot (xStocks, Dinari)",
       description:
-        "The /spot-stocks page (tokenized stocks: xStocks, Dinari). section='current' (default): summary (markets, providers, 24h/all-time volume, holders, traders, value USD) and per-token stats (underlying, provider, mark/mid/prev-day price, supply, volume, holders, traders, value USD, depth). 'timeseries': daily volume/holders/traders/value per token (last 30 days by default). 'liquidity': latest depth within 2/5/10/25 bps of mid (CUMULATIVE; plus a 25-500 bps band) in tokens and, as latestDepthUsd, in USD; with `token` or `days`, a sampled depth history. 'topHolders': largest holders per token (address, balance, value USD, % of supply).",
+        "The /spot-stocks page: tokenized stocks on Hyperliquid SPOT: NVDAX, SPYX, QQQX, SKHYX, MUX, SNDKX, SPCXX, TSLAX, AAPLX, CRCLX (xStocks) and SPCXD (Dinari). Per-token price, 24h/all-time volume, holders and liquidity ARE served. section='current' (default): summary + per-token stats. 'timeseries': daily volume/holders/traders/value per token (30 days default). 'liquidity': cumulative depth within 2/5/10/25 bps in tokens and USD. 'topHolders': largest holders.",
       inputSchema: {
         section: z.enum(["current", "timeseries", "liquidity", "topHolders"]).optional(),
-        token: z.string().optional().describe("Filter to tokens matching this symbol/underlying substring (e.g. 'NVDA', 'TSLAX')."),
+        token: z.string().optional().describe("Token/underlying substring ('NVDA')."),
         days: z.number().int().min(1).max(400).optional().describe("timeseries: last N days (default 30). liquidity: history days (default 1 with token)."),
         ...shapeInput,
       },

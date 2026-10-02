@@ -17,7 +17,7 @@ export const COVERAGE = {
     { path: "/peers", shows: "Gossip network crawl: nodes, edges, sentries, geography", tools: ["flowscan_peers"] },
     { path: "/hip-3", shows: "HIP-3 perp DEX analytics: overview, market share, daily series, markets, per-DEX detail, builder-routed volume, Binance RWA comparison", tools: ["flowscan_hip3_overview", "flowscan_hip3_daily", "flowscan_hip3_markets", "flowscan_hip3_dex", "flowscan_hip3_builders", "flowscan_hip3_binance_comparison"] },
     { path: "/hip-4", shows: "HIP-4 prediction/outcome markets, settled outcomes, question groups, outcome candles", tools: ["flowscan_hip4_markets", "flowscan_hip4_outcome", "flowscan_hip4_labels"] },
-    { path: "/spot-stocks", shows: "Tokenized stocks on spot (xStocks, Dinari): prices, volume, holders, liquidity, top holders", tools: ["flowscan_spot_stocks"] },
+    { path: "/spot-stocks", shows: "Tokenized stocks on Hyperliquid SPOT (xStocks tickers end in X, Dinari in D): NVDAX, SPYX, QQQX, SKHYX, MUX, SNDKX, SPCXX, TSLAX, AAPLX, CRCLX, SPCXD. Per-token price (mark/mid/prev-day), 24h and all-time volume, daily volume history, holders, traders, liquidity/order-book depth and top holders ARE served", tools: ["flowscan_spot_stocks"] },
     { path: "/weekend-trading", shows: "TradFi markets over the weekend: price moves since Friday close, positioning changes", tools: ["flowscan_weekend_weeks", "flowscan_weekend_prices", "flowscan_weekend_positions", "flowscan_weekend_coin_changes"] },
     { path: "/builders", shows: "Builder Arena leaderboard, all-time summary, daily revenue, user growth", tools: ["flowscan_builders_leaderboard", "flowscan_builders_summary", "flowscan_builders_daily_revenue", "flowscan_builders_user_series", "flowscan_builder_lookup", "flowscan_builder_revenue"] },
     { path: "/builders/{id}", shows: "Builder dashboard: window stats, daily series, volume by asset, intelligence report; any-range revenue for one builder (resolve names first: they can be ambiguous)", tools: ["flowscan_builder_lookup", "flowscan_builder_revenue", "flowscan_builder_dashboard", "flowscan_builder_intelligence_detail"] },
@@ -29,7 +29,7 @@ export const COVERAGE = {
       why: "Flowscan's own servers do not serve these. The Flowscan web page fetches them in your browser directly from Hyperliquid's public endpoints (rpc.hyperliquid.xyz, api.hyperliquid.xyz, api-ui.hyperliquid.xyz, api.hyperunit.xyz). This MCP is restricted to flowscan.xyz, so it does not call those hosts.",
     },
     {
-      item: "Live prices such as HYPE/USD or BTC, perp/spot candles and order books",
+      item: "Live prices such as HYPE/USD or BTC, perp/spot candles and order books (except tokenized stocks on spot, see flowscan_spot_stocks)",
       why: "Same reason: rendered in-browser from api.hyperliquid.xyz, not from a flowscan.xyz route. Prices that ARE available: perp entry/liquidation prices in position data, tokenized-stock marks (flowscan_spot_stocks), HIP-4 outcome prices and candles (flowscan_hip4_*), weekend TradFi closes (flowscan_weekend_prices) and Binance RWA last prices (flowscan_hip3_binance_comparison). Priority gas is therefore reported in HYPE, not USD.",
     },
     { item: "Testnet", why: "Flowscan has no testnet mode." },

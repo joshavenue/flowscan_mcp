@@ -3,25 +3,26 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { post } from "../client.js";
 import { dexPrefixes } from "../dex.js";
 import { defineTool } from "../register.js";
-import { DATE_YMD, envelope, page, pick, result, shapeInput, tail, todayUtc } from "../shape.js";
+import { DATE_YMD, envelope, envelopeRows, page, pick, result, shapeInput, tail, todayUtc } from "../shape.js";
 
 type Rec = Record<string, unknown>;
 
 const timeRange = {
-  startDate: DATE_YMD.optional().describe("First UTC day, YYYY-MM-DD (inclusive). Alternative to startTime."),
-  endDate: DATE_YMD.optional().describe("Last UTC day, YYYY-MM-DD (inclusive). Alternative to endTime."),
-  startTime: z.number().int().optional().describe("Start of range as Unix milliseconds."),
-  endTime: z.number().int().optional().describe("End of range as Unix milliseconds."),
+  startDate: DATE_YMD.optional().describe("First UTC day (inclusive)."),
+  endDate: DATE_YMD.optional().describe("Last UTC day (inclusive)."),
+  startTime: z.number().int().optional().describe("Range start, Unix ms."),
+  endTime: z.number().int().optional().describe("Range end, Unix ms."),
   days: z
     .number()
     .int()
     .min(1)
     .max(3650)
     .optional()
-    .describe("Most recent N days (default 90 without a range)."),
+    .describe("Last N complete UTC days (default 90)."),
+  includeToday: z.boolean().optional().describe("Append today's partial row."),
 };
 
-type RangeArgs = { startDate?: string; endDate?: string; startTime?: number; endTime?: number; days?: number };
+type RangeArgs = { startDate?: string; endDate?: string; startTime?: number; endTime?: number; days?: number; includeToday?: boolean };
 
 const DEFAULT_DAYS = 90;
 const DAY_MS = 86_400_000;
@@ -44,12 +45,21 @@ function body(type: string, r: { startTime?: number; endTime?: number }): Rec {
   return b;
 }
 
-/** Most recent N rows (default 90 unless an explicit range was requested); today's row is flagged partial. */
-function recent(rows: unknown, args: RangeArgs, r: { startTime?: number; endTime?: number }): Rec[] {
-  const list = Array.isArray(rows) ? (rows as Rec[]) : [];
-  const n = args.days ?? (r.startTime === undefined && r.endTime === undefined ? DEFAULT_DAYS : undefined);
+/**
+ * Rows for the request. Without an explicit range: the last N COMPLETE UTC days
+ * (default 90), ending yesterday, plus today's partial row only with includeToday.
+ * With startDate/startTime: rows as returned. Today's row is always flagged partial.
+ */
+function recent(rows: unknown, args: RangeArgs & { includeToday?: boolean }, r: { startTime?: number; endTime?: number }): Rec[] {
+  let list = Array.isArray(rows) ? (rows as Rec[]) : [];
   const today = todayUtc();
-  return tail(list, n).map((row) => (row.day === today ? { ...row, partial: true } : row));
+  const explicit = r.startTime !== undefined || r.endTime !== undefined;
+  if (!explicit || args.days !== undefined) {
+    const complete = list.filter((row) => row.day !== today);
+    const todayRow = list.find((row) => row.day === today);
+    list = [...tail(complete, args.days ?? (explicit ? undefined : DEFAULT_DAYS)), ...(args.includeToday && todayRow ? [todayRow] : [])];
+  }
+  return list.map((row) => (row.day === today ? { ...row, partial: true } : row));
 }
 
 const num = (v: unknown) => Number(v ?? 0) || 0;
@@ -70,7 +80,7 @@ export function registerRevenueTools(server: McpServer): void {
     {
       title: "Daily HyperCore fee revenue (native vs HIP-3)",
       description:
-        "/revenue 'Daily HyperCore Revenue' (and homepage 24h panel): one row per UTC day, oldest first (last 90 days by default; history from 2026-03): nativeHypercoreFee (non-HIP-3 markets) and hip3HypercoreFee (HIP-3 markets), USDC strings, plus rangeTotals. Range via days, startDate/endDate or startTime/endTime (ms). Today's row has partial: true. For 1/7/30-day totals use flowscan_revenue_summary.",
+        "/revenue 'Daily HyperCore Revenue' (and homepage 24h panel): one row per UTC day, oldest first: nativeHypercoreFee (non-HIP-3 markets) and hip3HypercoreFee (HIP-3 markets), USDC strings, plus rangeTotals. `days` = last N COMPLETE UTC days ending yesterday (default 90), like revenue_summary and the builder tools; includeToday appends today's partial row (partial: true). Or pass startDate/endDate or startTime/endTime (ms). History from 2026-03.",
       inputSchema: { ...timeRange, ...shapeInput },
     },
     async (args) => {
@@ -80,7 +90,7 @@ export function registerRevenueTools(server: McpServer): void {
       const hip3 = rows.reduce((a, x) => a + num(x.hip3HypercoreFee), 0);
       const rangeTotals = { ...rangeInfo(rows), nativeHypercoreFeeUsdc: nat, hip3HypercoreFeeUsdc: hip3, totalHypercoreFeeUsdc: nat + hip3 };
       const { items, paging } = page(rows, args, 400);
-      return result(envelope("/api/gossip/info", items.map((x) => pick(x, args.fields)), { paging, units: "USDC per day", rangeTotals }));
+      return result(envelopeRows("/api/gossip/info", items, args.fields, { paging, units: "USDC per day", rangeTotals }));
     },
   );
 
@@ -90,7 +100,7 @@ export function registerRevenueTools(server: McpServer): void {
     {
       title: "Daily HIP-3 deployer fees by DEX",
       description:
-        "/revenue 'Deployer Fees': HIP-3 deployer fees per UTC day, oldest first (last 90 days by default): totalFee and byDex [{dex, totalFee}] with on-chain names ('xyz', 'para', 'io', 'mkts', 'hyna', 'cash', 'flx', 'vntl', 'km', 'hyperliquid'), plus rangeTotals (overall and per DEX). Today's row has partial: true. USDC. Paid to deployers, so not part of Flowscan's headline protocol revenue.",
+        "/revenue 'Deployer Fees': HIP-3 deployer fees per UTC day, oldest first: totalFee and byDex [{dex, totalFee}] with on-chain names ('xyz', 'para', 'io', 'mkts', 'hyna', 'cash', 'flx', 'vntl', 'km', 'hyperliquid'), plus rangeTotals (overall and per DEX). `days` = last N complete UTC days ending yesterday (default 90); includeToday adds today's partial row. USDC. Paid to deployers, so not part of Flowscan's headline protocol revenue.",
       inputSchema: { ...timeRange, dex: z.string().optional().describe("One DEX: on-chain name ('xyz') or display name ('KM' = km + mkts). Rows then have dexTotalFee and allDexTotalFee."), ...shapeInput },
     },
     async (args) => {
@@ -118,7 +128,7 @@ export function registerRevenueTools(server: McpServer): void {
         byDex: Object.fromEntries(Object.entries(byDexTotals).sort((x, y) => y[1] - x[1])),
       };
       const { items, paging } = page(rows, args, 400);
-      return result(envelope("/api/gossip/info", items.map((x) => pick(x, args.fields)), { paging, units: "USDC per day", rangeTotals }));
+      return result(envelopeRows("/api/gossip/info", items, args.fields, { paging, units: "USDC per day", rangeTotals }));
     },
   );
 
@@ -128,7 +138,7 @@ export function registerRevenueTools(server: McpServer): void {
     {
       title: "Daily priority gas (write/read) with top users",
       description:
-        "Revenue page 'Daily Priority Gas' chart and 'Top Users' table: per UTC day (oldest first, last 90 days by default), writePriority and readPriority {totalGas (HYPE), count} and, with includeTopUsers, the top 5 gas-paying users per day, plus rangeTotals. Today's row is flagged partial: true.",
+        "/revenue 'Daily Priority Gas' and 'Top Users': per UTC day, writePriority and readPriority {totalGas (HYPE), count} and, with includeTopUsers, the top 5 gas payers, plus rangeTotals. `days` = last N complete UTC days ending yesterday (default 90); includeToday adds today's partial row.",
       inputSchema: {
         ...timeRange,
         includeTopUsers: z.boolean().optional().describe("Include per-day topUsers lists (default false to keep output small)."),
@@ -153,7 +163,7 @@ export function registerRevenueTools(server: McpServer): void {
         });
       }
       const { items, paging } = page(rows, args, 400);
-      return result(envelope("/api/gossip/info", items.map((x) => pick(x, args.fields)), { paging, units: "HYPE gas per day", rangeTotals }));
+      return result(envelopeRows("/api/gossip/info", items, args.fields, { paging, units: "HYPE gas per day", rangeTotals }));
     },
   );
 
