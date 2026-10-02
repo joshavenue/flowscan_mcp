@@ -401,16 +401,20 @@ const directCases: Case[] = [
     args: { seconds: 4, limit: 10 },
     check: (d) => {
       assert(d.mode === "hyperliquid-direct" && d.source === "wss://rpc.hyperliquid.xyz/ws" && d.shownOn === "https://www.flowscan.xyz/", "envelope");
-      const bs = d.data.blocks;
+      assert(typeof d.fetchedAt === "number" && d.fetchedAtIso === new Date(d.fetchedAt).toISOString(), "fetchedAt");
+      const bs = d.data.blocks.rows;
+      assert(d.data.blocks.heightRange.to === bs[0].height && d.data.blocks.count >= bs.length, "blocks.heightRange/count");
       assert(bs.length === 10 && isDesc(bs.map((b: Json) => b.height)), "blocks not newest first");
       assert(Date.now() - bs[0].blockTime < 120_000 && bs[0].blockTimeIso, "latest block is stale");
       assert(d.data.stats.blocksPerSec > 1 && d.data.stats.medianBlockIntervalMs > 0, "stats");
-      assert(d.data.txs.length > 0 && d.data.txs[0].timeIso && d.data.txs[0].summary, "txs");
+      const tx = d.data.txs;
+      assert(tx.rows.length > 0 && tx.rows[0].timeIso && tx.rows[0].summary, "txs");
+      assert(Object.values(tx.countsByType).reduce((a: number, b: any) => a + b, 0) === tx.count && tx.timeSpanMs >= 0 && tx.timeSpanIso.to, "txs.countsByType/timeSpan");
       // A block a few heights back is surely final on the explorer.
       live.height = bs[3].height;
     },
   },
-  { tool: "flowscan_live_feed", label: "blocks only, 1s", args: { seconds: 1, include: "blocks", limit: 3 }, check: (d) => assert(d.data.blocks.length === 3 && !("txs" in d.data), "include=blocks") },
+  { tool: "flowscan_live_feed", label: "blocks only, 1s", args: { seconds: 1, include: "blocks", limit: 3 }, check: (d) => assert(d.data.blocks.rows.length === 3 && !("txs" in d.data), "include=blocks") },
   {
     tool: "flowscan_block",
     args: () => ({ height: live.height, limit: 20 }),
@@ -444,6 +448,8 @@ const directCases: Case[] = [
       assert(d.data.length === 4 && d.data.every((r: Json) => r.markPx > 0 && r.midPx > 0 && r.oraclePx > 0 && r.dayNtlVlm >= 0), "prices");
       assert(d.data.map((r: Json) => r.coin).join() === "BTC,ETH,HYPE,xyz:TSLA", "order/names");
       assert(d.request.some((r: Json) => r.dex === "xyz"), "HIP-3 dex request");
+      assert(d.data.every((r: Json) => r.openInterestUsdTwoSided > 0 && r.openInterestUsdOneSided === Math.round(r.openInterestUsdTwoSided / 2)) && /BOTH sides/.test(d.oiNote), "OI labels");
+      assert(typeof d.fetchedAt === "number", "fetchedAt");
     },
   },
   { tool: "flowscan_prices", label: "top 5 by volume", args: { limit: 5 }, check: (d) => assert(d.data.length === 5 && d.data[0].dayNtlVlm >= d.data[4].dayNtlVlm && d.totals.markets > 50, "top list") },
@@ -481,9 +487,9 @@ const directCases: Case[] = [
   {
     tool: "flowscan_validator_summaries",
     args: {},
-    check: (d) => assert(d.data.validators.length > 20 && d.data.summary.totalStakeHype > 1e8 && d.data.validators.some((v: Json) => v.predictedAprPct > 0 && v.uptimePct > 0), "validators"),
+    check: (d) => assert(d.fetchedAtIso && d.data.validators.length > 20 && d.data.summary.totalStakeHype > 1e8 && d.data.validators.some((v: Json) => v.predictedAprPct > 0 && v.uptimePct > 0), "validators"),
   },
-  { tool: "flowscan_borrow_lend_reserves", args: {}, check: (d) => assert(d.data.some((r: Json) => r.token === "USDC" && r.supplyApyPct >= 0 && r.borrowApyPct > 0), "reserves") },
+  { tool: "flowscan_borrow_lend_reserves", args: {}, check: (d) => assert(d.fetchedAtIso && d.data.some((r: Json) => r.token === "USDC" && r.supplyApyPct >= 0 && r.borrowApyPct > 0), "reserves") },
   ...[VAULT, BUSY].flatMap((addr): Case[] => [
     {
       tool: "flowscan_address_portfolio",

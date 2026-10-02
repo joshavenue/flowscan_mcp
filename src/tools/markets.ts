@@ -29,6 +29,8 @@ import { ENDPOINTS, UpstreamError, wsCollect } from "../upstream.js";
 
 type Rec = Record<string, unknown>;
 const SITE = "https://www.flowscan.xyz";
+const OI_NOTE =
+  "Hyperliquid's openInterest counts BOTH sides (long + short size; checked: it equals 2x the summed long positions in Flowscan's perp snapshot). openInterestTwoSided / openInterestUsdTwoSided are on the same basis as Flowscan's perp snapshot openInterest (long + short notional, flowscan_perp_markets) and directly comparable with it; openInterestUsdOneSided is half (one side, e.g. total long notional).";
 const r2 = (x: number | null, d = 2) => (x === null ? null : Math.round(x * 10 ** d) / 10 ** d);
 const pct = (a: number | null, b: number | null) => (a !== null && b !== null && b !== 0 ? r2(((a - b) / b) * 100, 3) : null);
 
@@ -47,8 +49,9 @@ function perpRow(u: Rec, c: Rec | undefined, dex: string): Rec {
     fundingHourly: funding,
     fundingAprPct: funding === null ? null : r2(funding * 24 * 365 * 100, 2),
     premium: num(c?.premium),
-    openInterest: oi,
-    openInterestUsd: oi !== null && mark !== null ? Math.round(oi * mark) : null,
+    openInterestTwoSided: oi,
+    openInterestUsdTwoSided: oi !== null && mark !== null ? Math.round(oi * mark) : null,
+    openInterestUsdOneSided: oi !== null && mark !== null ? Math.round((oi * mark) / 2) : null,
     dayNtlVlm: num(c?.dayNtlVlm) === null ? null : Math.round(num(c?.dayNtlVlm)!),
     maxLeverage: u.maxLeverage,
     ...(u.isDelisted ? { isDelisted: true } : {}),
@@ -99,7 +102,7 @@ export function registerMarketTools(server: McpServer): void {
     {
       title: "Perp prices, funding, OI, 24h volume",
       description:
-        "Live perp prices as Flowscan loads them (allMids + metaAndAssetCtxs): mark, mid, oracle, 24h change, hourly funding (+APR), premium, open interest (base and USD), 24h notional volume, max leverage. `coins` like ['HYPE','BTC','xyz:TSLA'] (HIP-3 'dex:COIN', display names ok; spot pairs/tokens give mid only). Without coins: top markets of one dex by 24h volume. Answers 'what is the HYPE price'.",
+        "Live perp prices as Flowscan loads them (allMids + metaAndAssetCtxs): mark, mid, oracle, 24h change, hourly funding (+APR), premium, open interest (two-sided like Flowscan's snapshot, plus one-sided USD), 24h notional volume, max leverage. `coins` like ['HYPE','BTC','xyz:TSLA'] (HIP-3 'dex:COIN', display names ok; spot pairs/tokens give mid only). Without coins: top markets of one dex by 24h volume. Answers 'what is the HYPE price'.",
       inputSchema: {
         coins: z.array(z.string()).max(50).optional().describe("Coins to quote."),
         dex: z.string().optional().describe("HIP-3 dex for the top list (prefix or name; default main)."),
@@ -147,19 +150,19 @@ export function registerMarketTools(server: McpServer): void {
           }
         }
         const { rows: picked, report } = pickRows(rows, args.fields);
-        return result(upstreamEnvelope(ENDPOINTS.info, `${SITE}/`, picked, { request: requests, count: rows.length, ...(notFound.length ? { notFound } : {}), ...report }));
+        return result(upstreamEnvelope(ENDPOINTS.info, `${SITE}/`, picked, { request: requests, oiNote: OI_NOTE, count: rows.length, ...(notFound.length ? { notFound } : {}), ...report }));
       }
       const dex = dexArg(args.dex);
       if (dex) requests.push({ type: "metaAndAssetCtxs", dex });
       let rows = await perpRows(dex);
       const delisted = rows.filter((r) => r.isDelisted).length;
       if (!args.includeDelisted) rows = rows.filter((r) => !r.isDelisted);
-      const key = { volume: "dayNtlVlm", openInterest: "openInterestUsd", change: "change24hPct", funding: "fundingHourly" }[(args.sortBy ?? "volume") as "volume"];
+      const key = { volume: "dayNtlVlm", openInterest: "openInterestUsdTwoSided", change: "change24hPct", funding: "fundingHourly" }[(args.sortBy ?? "volume") as "volume"];
       rows.sort((a, b) => Number(b[key] ?? -Infinity) - Number(a[key] ?? -Infinity));
       const { items, paging } = page(rows, args, 20);
       const { rows: picked, report } = pickRows(items, args.fields);
-      const totals = { markets: rows.length, delistedHidden: args.includeDelisted ? 0 : delisted, dayNtlVlmUsd: Math.round(rows.reduce((s, r) => s + Number(r.dayNtlVlm ?? 0), 0)), openInterestUsd: Math.round(rows.reduce((s, r) => s + Number(r.openInterestUsd ?? 0), 0)) };
-      return result(upstreamEnvelope(ENDPOINTS.info, `${SITE}/`, picked, { request: requests, dex: dex || "main", sortedBy: key, totals, paging, ...report }));
+      const totals = { markets: rows.length, delistedHidden: args.includeDelisted ? 0 : delisted, dayNtlVlmUsd: Math.round(rows.reduce((s, r) => s + Number(r.dayNtlVlm ?? 0), 0)), openInterestUsdTwoSided: Math.round(rows.reduce((s, r) => s + Number(r.openInterestUsdTwoSided ?? 0), 0)) };
+      return result(upstreamEnvelope(ENDPOINTS.info, `${SITE}/`, picked, { request: requests, oiNote: OI_NOTE, dex: dex || "main", sortedBy: key, totals, paging, ...report }));
     },
   );
 

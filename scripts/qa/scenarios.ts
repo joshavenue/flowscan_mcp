@@ -546,7 +546,9 @@ const scenarios: Scenario[] = [
     async run(c) {
       const r = await c.call("flowscan_live_feed", { include: "blocks", seconds: 3, limit: 10 });
       const d = r.json;
-      const bs = d?.data?.blocks ?? [];
+      const bs = d?.data?.blocks?.rows ?? [];
+      c.must("blocks.heightRange and count given (no hand counting)", d?.data?.blocks?.heightRange?.to === bs[0]?.height && d?.data?.blocks?.heightRange?.from <= bs[bs.length - 1]?.height && d?.data?.blocks?.count >= bs.length, d?.data?.blocks?.heightRange);
+      c.must("snapshot time (fetchedAt/fetchedAtIso)", typeof d?.fetchedAt === "number" && d?.fetchedAtIso === new Date(d.fetchedAt).toISOString(), d?.fetchedAtIso);
       c.must("envelope: mode, wss source, homepage shownOn", d?.mode === "hyperliquid-direct" && d?.source === "wss://rpc.hyperliquid.xyz/ws" && d?.shownOn === "https://www.flowscan.xyz/", [d?.mode, d?.source, d?.shownOn]);
       c.must("10 blocks, newest first, distinct heights", bs.length === 10 && bs.every((b: any, i: number) => i === 0 || bs[i - 1].height > b.height), bs.map((b: any) => b.height));
       c.must("latest block is < 60 s old", bs[0] && Date.now() - bs[0].blockTime < 60_000, bs[0]?.blockTimeIso);
@@ -565,7 +567,7 @@ const scenarios: Scenario[] = [
     name: "Block lookup: /block/{height} field-by-field vs raw blockDetails",
     upstream: true,
     async run(c) {
-      const height = shared.height ?? (await c.call("flowscan_live_feed", { include: "blocks", seconds: 1, limit: 5 })).json?.data?.blocks?.[3]?.height;
+      const height = shared.height ?? (await c.call("flowscan_live_feed", { include: "blocks", seconds: 1, limit: 5 })).json?.data?.blocks?.rows?.[3]?.height;
       const r = await c.call("flowscan_block", { height });
       const d = r.json?.data;
       const rb = (await rawUpstream("https://rpc.hyperliquid.xyz/explorer", { height, type: "blockDetails" }))?.blockDetails;
@@ -638,7 +640,13 @@ const scenarios: Scenario[] = [
       c.must("mid within 1% of raw allMids.HYPE", Math.abs(row?.midPx - ref) / ref < 0.01, [row?.midPx, ref]);
       c.must("source/mode/shownOn", r.json?.source === "https://api.hyperliquid.xyz/info" && r.json?.mode === "hyperliquid-direct" && r.json?.shownOn === "https://www.flowscan.xyz/");
       c.must("requests are the homepage's (allMids + metaAndAssetCtxs)", JSON.stringify(r.json?.request) === JSON.stringify([{ type: "allMids" }, { type: "metaAndAssetCtxs" }]), r.json?.request);
-      c.must("24h volume, OI and funding present", row?.dayNtlVlm > 0 && row?.openInterestUsd > 0 && typeof row?.fundingHourly === "number", row);
+      c.must("24h volume, OI and funding present", row?.dayNtlVlm > 0 && row?.openInterestUsdTwoSided > 0 && typeof row?.fundingHourly === "number", row);
+      c.must("snapshot time given", typeof r.json?.fetchedAt === "number" && r.json?.fetchedAtIso, r.json?.fetchedAtIso);
+      // OI basis: Hyperliquid's openInterest is two-sided, the same basis as Flowscan's perp snapshot openInterest (long + short).
+      const pm = await c.call("flowscan_perp_markets", { market: "HYPE", limit: 20 });
+      const fsHype = (pm.json?.data?.markets ?? []).find((m: any) => m.market === "HYPE");
+      c.must("openInterestUsdTwoSided within 3% of Flowscan snapshot openInterest (same basis); one-sided = half", fsHype && rel(row.openInterestUsdTwoSided, fsHype.openInterest) < 0.03 && row.openInterestUsdOneSided === Math.round(row.openInterestUsdTwoSided / 2), [row?.openInterestUsdTwoSided, fsHype?.openInterest]);
+      c.must("oiNote explains the basis", /BOTH sides/.test(r.json?.oiNote ?? ""), r.json?.oiNote);
       const multi = await c.call("flowscan_prices", { coins: ["BTC", "eth", "xyz:TSLA", "KM:US500", "NVDAX"] });
       const coins = (multi.json?.data ?? []).map((x: any) => x.coin);
       c.must("BTC/ETH/HIP-3 (incl. display-name alias)/spot token resolve", ["BTC", "ETH", "xyz:TSLA", "mkts:US500", "@702"].every((k) => coins.includes(k)), coins);

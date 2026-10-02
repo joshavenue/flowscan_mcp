@@ -5,11 +5,15 @@
  * deterministic check per record.
  *
  *   npx tsx scripts/eval/report.ts --run-id full
+ *   npx tsx scripts/eval/report.ts --run-id direct-r1 --mode direct   # mode is normally read from meta.json / the records
+ *
+ * The mode sets the allowed hosts and the expected tool count (strict: www.flowscan.xyz, 44;
+ * direct: www.flowscan.xyz + api/rpc/api-ui.hyperliquid.xyz + api.hyperunit.xyz, 58).
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { RunRecord } from "./run.js";
+import { MODES, type Mode, type RunRecord } from "./run.js";
 import type { Judgment } from "./judge.js";
 import type { GT } from "./groundtruth.js";
 
@@ -21,6 +25,16 @@ const outDir = path.join(EVAL_DIR, "results", runId);
 const readJsonl = <T,>(f: string): T[] => (fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
 const records = readJsonl<RunRecord>(path.join(outDir, "results.jsonl"));
 const judgments = new Map(readJsonl<Judgment>(path.join(outDir, "judgments.jsonl")).map((j) => [j.id, j]));
+const modeArg = args.indexOf("--mode") >= 0 ? args[args.indexOf("--mode") + 1] : undefined;
+const metaFile = path.join(outDir, "meta.json");
+const meta = fs.existsSync(metaFile) ? JSON.parse(fs.readFileSync(metaFile, "utf8")) : null;
+const recordModes = [...new Set(records.map((r) => r.mode ?? "strict"))];
+if (recordModes.length > 1) throw new Error(`records in ${runId} mix modes: ${recordModes.join(", ")}`);
+const mode: Mode = (modeArg ?? meta?.mode ?? recordModes[0] ?? "strict") as Mode;
+if (!MODES[mode]) throw new Error(`unknown --mode ${mode}`);
+if (recordModes[0] && recordModes[0] !== mode) throw new Error(`--mode ${mode} but the records were run in ${recordModes[0]} mode`);
+const ALLOWED_HOSTS = new Set(MODES[mode].hosts);
+const EXPECTED_TOOLS = MODES[mode].tools;
 const gtFiles = ["before", "after"].map((l) => path.join(outDir, `groundtruth-${l}.json`)).filter((f) => fs.existsSync(f));
 const gts: Record<string, GT>[] = gtFiles.map((f) => JSON.parse(fs.readFileSync(f, "utf8")).gt);
 
@@ -115,7 +129,8 @@ function check(r: RunRecord): Checks {
     if (nums.length) flags.push(`REVIEW_digits_in_not_served(${nums.slice(0, 4).join(" ")})`);
   }
   if (r.nonFlowscanToolUses.length) flags.push(`non_flowscan_tool_use(${r.nonFlowscanToolUses.join(",")})`);
-  const badHosts = Object.keys(r.fetches.hosts).filter((h) => h !== "www.flowscan.xyz");
+  const badHosts = Object.keys(r.fetches.hosts).filter((h) => !ALLOWED_HOSTS.has(h));
+  if (r.availableToolCount !== null && r.availableToolCount !== EXPECTED_TOOLS) flags.push(`tool_count_${r.availableToolCount}_expected_${EXPECTED_TOOLS}`);
   if (badHosts.length) flags.push(`non_flowscan_host(${badHosts.join(",")})`);
   const c: Checks = { id: r.id, flags, dataToolCalls: dataCalls, toolErrors };
   if (e.groundTruth) c.gt = { key: e.groundTruth, ...gtMatch(r.finalText, e.groundTruth) };
@@ -141,7 +156,7 @@ const P = (s = "") => L.push(s);
 
 P(`# Flowscan MCP model-in-the-loop eval: run \`${runId}\``);
 P();
-P(`Agent: Claude Code CLI \`-p\` with \`--model ${records[0]?.model ?? "sonnet"}\`, only the 44 \`mcp__flowscan__*\` tools (built-in tools disabled with \`--tools ""\`, skills disabled), system prompt = shipped SKILL.md body + one instruction line. Judge: Opus via \`claude -p --model opus\`, no tools. Generated ${new Date().toISOString()}.`);
+P(`Mode: **${mode}** (${EXPECTED_TOOLS} tools; allowed hosts: ${[...ALLOWED_HOSTS].join(", ")}). Agent: Claude Code CLI \`-p\` with \`--model ${records[0]?.model ?? "sonnet"}\`, only the ${EXPECTED_TOOLS} \`mcp__flowscan__*\` tools (built-in tools disabled with \`--tools ""\`, skills disabled), system prompt = shipped SKILL.md body + one instruction line. Judge: Opus via \`claude -p --model opus\`, no tools. Generated ${new Date().toISOString()}.`);
 P();
 P(`## Totals`);
 P();
@@ -274,8 +289,16 @@ const nonFsSpill = nonFs.filter((r) => spillIds.has(r.id));
 const nonFsOther = nonFs.filter((r) => !spillIds.has(r.id));
 const fmtNonFs = (rs: RunRecord[]) => rs.map((r) => `${r.id} (${r.nonFlowscanToolUses.join(",")}: ${esc(JSON.stringify(r.toolCalls.find((c) => !c.name.startsWith("mcp__flowscan__"))?.input ?? {}).slice(0, 90))})`).join("; ");
 P(`- tool_use blocks not named \`mcp__flowscan__*\`: ${nonFs.length ? `**${nonFs.length} records attempted a non-flowscan tool.** All were refused by the CLI ("No such tool available") because no built-in tools were enabled, so none executed and none contacted any host. After a result was saved to a file (see "Results too large for the client"): ${fmtNonFs(nonFsSpill) || "none"}. Other attempts: ${fmtNonFs(nonFsOther) || "none"}.` : "**none** across all records"}`);
-P(`- Tools available to the agent per the init message: ${toolCountSet.join("/")} tools; non-flowscan tools available: ${extraAvail.length ? extraAvail.join(", ") : "none"}. MCP status: ${[...new Set(records.map((r) => r.mcpStatus))].join("/")}.`);
-P(`- Outbound requests recorded by the fetch logger preloaded into every MCP server process: ${Object.entries(allHosts).map(([h, k]) => `${h} x${k}`).join(", ") || "none"}. ${Object.keys(allHosts).every((h) => h === "www.flowscan.xyz") ? "**Only www.flowscan.xyz was contacted.**" : "**NON-FLOWSCAN HOSTS CONTACTED.**"}`);
+P(`- Tools available to the agent per the init message: ${toolCountSet.join("/")} tools (expected ${EXPECTED_TOOLS} for ${mode} mode); non-flowscan tools available: ${extraAvail.length ? extraAvail.join(", ") : "none"}. MCP status: ${[...new Set(records.map((r) => r.mcpStatus))].join("/")}.`);
+P(`- Outbound requests (HTTP and WebSocket) recorded by the logger preloaded into every MCP server process: ${Object.entries(allHosts).map(([h, k]) => `${h} x${k}`).join(", ") || "none"}. ${Object.keys(allHosts).every((h) => ALLOWED_HOSTS.has(h)) ? `**Only allowed hosts for ${mode} mode were contacted** (${[...ALLOWED_HOSTS].join(", ")}).` : `**HOSTS OUTSIDE THE ${mode.toUpperCase()} ALLOWLIST CONTACTED: ${Object.keys(allHosts).filter((h) => !ALLOWED_HOSTS.has(h)).join(", ")}**`}`);
+const sizes = records.flatMap((r) => r.toolCalls.filter((c) => c.name.startsWith("mcp__flowscan__") && !SPILL.test(c.resultPreview)).map((c) => ({ id: r.id, tool: short(c.name), chars: c.resultChars })));
+const biggest = sizes.sort((a, b) => b.chars - a.chars)[0];
+P(`- Largest flowscan result the client received: ${biggest ? `${biggest.chars.toLocaleString("en-US")} chars (${biggest.id}, ${biggest.tool})` : "n/a"}; results the client saved to a file instead: ${records.reduce((a, r) => a + r.toolCalls.filter((c) => SPILL.test(c.resultPreview)).length, 0)}.`);
+if (mode === "strict") {
+  const ns = records.filter((r) => r.expect.behaviour === "not_served");
+  const mentions = ns.filter((r) => /FLOWSCAN_HYPERLIQUID_DIRECT|direct mode|hyperliquid-direct/i.test(r.finalText));
+  if (ns.length) P(`- Not-served answers that mention the operator can enable direct mode (FLOWSCAN_HYPERLIQUID_DIRECT): ${mentions.length}/${ns.length}${ns.length - mentions.length ? ` (missing: ${ns.filter((r) => !mentions.includes(r)).map((r) => r.id).join(", ")})` : ""}.`);
+}
 P();
 P(`## Tool usage`);
 P();
@@ -284,7 +307,7 @@ for (const r of records) for (const c of r.toolCalls) usage.set(short(c.name), (
 P(`| tool | calls |`);
 P(`|---|---|`);
 for (const [t, k] of [...usage.entries()].sort((a, b) => b[1] - a[1])) P(`| ${t} | ${k} |`);
-const unused = ["coverage", "stablecoin_margin", "peers", "staking_overview", "validator_stakers", "staking_events", "revenue_hypercore_fees", "revenue_deployer_fees", "revenue_priority_gas", "revenue_summary", "perp_markets", "perp_positions", "address_perp_positions", "address_summary", "address_orders", "address_fills", "address_ledger", "address_staking", "address_vaults_subaccounts", "address_extras", "spot_stocks", "weekend_weeks", "weekend_prices", "weekend_positions", "weekend_coin_changes", "hip4_markets", "hip4_outcome", "hip4_labels", "hip3_overview", "hip3_daily", "hip3_markets", "hip3_dex", "hip3_builders", "hip3_binance_comparison", "builders_leaderboard", "builders_summary", "builders_daily_revenue", "builder_lookup", "builder_revenue", "builders_user_series", "builder_dashboard", "builder_intelligence_list", "builder_intelligence_detail", "builder_intelligence_summary"].filter((t) => !usage.has(t));
+const unused = ["coverage", "stablecoin_margin", "peers", "staking_overview", "validator_stakers", "staking_events", "revenue_hypercore_fees", "revenue_deployer_fees", "revenue_priority_gas", "revenue_summary", "perp_markets", "perp_positions", "address_perp_positions", "address_summary", "address_orders", "address_fills", "address_ledger", "address_staking", "address_vaults_subaccounts", "address_extras", "spot_stocks", "weekend_weeks", "weekend_prices", "weekend_positions", "weekend_coin_changes", "hip4_markets", "hip4_outcome", "hip4_labels", "hip3_overview", "hip3_daily", "hip3_markets", "hip3_dex", "hip3_builders", "hip3_binance_comparison", "builders_leaderboard", "builders_summary", "builders_daily_revenue", "builder_lookup", "builder_revenue", "builders_user_series", "builder_dashboard", "builder_intelligence_list", "builder_intelligence_detail", "builder_intelligence_summary", ...(mode === "direct" ? ["block", "transaction", "live_feed", "prices", "candles", "order_book", "recent_trades", "spot_tokens", "perp_dexs", "validator_summaries", "borrow_lend_reserves", "address_portfolio", "address_evm_balance", "address_unit_operations"] : [])].filter((t) => !usage.has(t));
 P();
 P(`Tools never called: ${unused.length ? unused.join(", ") : "none"}.`);
 P();

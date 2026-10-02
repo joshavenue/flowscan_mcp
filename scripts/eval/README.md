@@ -6,11 +6,12 @@
 
 | file | purpose |
 | --- | --- |
-| `prompts.json` | 220 prompts `{id, category, prompt, expect}`. `expect = {tools (acceptable, any-of), behaviour: answer \| disambiguate \| not_served \| out_of_scope, notes, requireAll?, ordered?, numeric?, groundTruth?, toolOptional?}` |
-| `mcp.json` | the MCP config the agent uses (`node dist/index.js`, `FLOWSCAN_MAX_CONCURRENCY=2`) |
+| `prompts.json` | 258 prompts `{id, category, prompt, expect, expectDirect?}`: 220 strict-mode prompts plus 38 in category `direct`. `expect = {tools (acceptable, any-of), behaviour: answer \| disambiguate \| not_served \| out_of_scope, notes, requireAll?, ordered?, numeric?, groundTruth?, toolOptional?}`; `expectDirect` (same shape) replaces it in Hyperliquid-direct mode |
+| `mcp.json` | the MCP config the agent uses by default: strict mode (`node dist/index.js`, `FLOWSCAN_MAX_CONCURRENCY=2`) |
+| `mcp.direct.json` | the same plus `FLOWSCAN_HYPERLIQUID_DIRECT=1` (58 tools); pass it with `run.ts --mcp` |
 | `system.md` | appended system prompt: the body of `skills/flowscan/SKILL.md` (no frontmatter) plus one instruction line. It is a copy, so regenerate it after editing the skill (see below) |
 | `run.ts` | runs the agent per prompt and records tool calls, results, final answer, cost, turns, hosts |
-| `fetch-log.mjs` | preloaded into each MCP server process (`node --import`); logs every outbound request host so the run proves only www.flowscan.xyz was contacted |
+| `fetch-log.mjs` | preloaded into each MCP server process (`node --import`); logs the host of every outbound `fetch` and WebSocket, so the run proves which hosts were contacted |
 | `judge.ts` | Opus judge, one verdict `{grade: PASS\|PARTIAL\|FAIL, reason, failure_mode}` per record |
 | `groundtruth.ts` | computes ~20 reference figures by calling the tools directly (via `scripts/qa/lib.ts`) |
 | `report.ts` | deterministic checks + judge + ground truth -> `REPORT.md` and `checks.json` (appends `analysis.md` from the run dir if present) |
@@ -50,23 +51,21 @@ npx tsx scripts/eval/judge.ts --run-id after-r3 && npx tsx scripts/eval/report.t
 
 ## Running in Hyperliquid-direct mode
 
-`run.ts` always reads `scripts/eval/mcp.json`; there is no flag for another config. To evaluate the opt-in direct mode (58 tools):
+The server's opt-in direct mode (`FLOWSCAN_HYPERLIQUID_DIRECT=1`, 58 tools) is selected with `--mcp`:
 
-1. Add the switch to the server's `env` in `mcp.json` (or keep a `mcp.direct.json` with it and copy it over `mcp.json` for the run):
+```sh
+npx tsx scripts/eval/run.ts --run-id direct-r1 --mcp scripts/eval/mcp.direct.json --concurrency 3 [--only ...]
+npx tsx scripts/eval/judge.ts --run-id direct-r1 --concurrency 4
+npx tsx scripts/eval/report.ts --run-id direct-r1          # mode read from results/direct-r1/meta.json
+```
 
-   ```json
-   {"mcpServers":{"flowscan":{"command":"node","args":["/home/user/flowscan_mcp/dist/index.js"],"env":{"FLOWSCAN_MAX_CONCURRENCY":"2","FLOWSCAN_HYPERLIQUID_DIRECT":"1"}}}}
-   ```
-
-2. Regenerate `system.md` from the current `skills/flowscan/SKILL.md` (command above); the skill's "Modes" section tells the agent how to behave in each mode.
-3. Run on Node 22 or newer (the live feed, order book and recent trades tools use WebSockets), with a new run id, e.g. `npx tsx scripts/eval/run.ts --run-id direct --concurrency 2`. Keep the concurrency low: Hyperliquid rate-limits per IP, and a 429 is returned to the agent, not retried.
-4. Restore `mcp.json` afterwards, so later strict runs stay strict.
-
-When reading a direct-mode report, keep in mind:
-
-- `report.ts` treats every host other than www.flowscan.xyz as foreign, so it will flag the four allowlisted hosts (`api.hyperliquid.xyz`, `rpc.hyperliquid.xyz`, `api-ui.hyperliquid.xyz`, `api.hyperunit.xyz`). Any other host is a real failure.
-- The header line says "44 tools"; the agent actually had 58 (`availableToolCount` in each record shows the count).
-- The `not_served` prompts were written for strict mode. In direct mode, block, tx, price, candle, EVM-balance and Unit prompts are answerable, so their rubrics (expected behaviour `not_served`) do not apply; grade those by hand or add direct-mode variants to `prompts.json`.
+- `mcp.direct.json` is `mcp.json` plus `FLOWSCAN_HYPERLIQUID_DIRECT=1`. `run.ts` derives the mode from the config's server env, writes it to `results/<run-id>/meta.json` and to every record (`mode`, `mcpConfig`), and refuses to mix modes in one run dir.
+- `report.ts` takes the allowed hosts and the expected tool count from the mode. Strict: www.flowscan.xyz, 44 tools. Direct: www.flowscan.xyz, api.hyperliquid.xyz, rpc.hyperliquid.xyz, api-ui.hyperliquid.xyz and api.hyperunit.xyz, 58 tools. `--mode strict|direct` overrides this, and must match the records. Any other host, or a different tool count, is flagged.
+- `fetch-log.mjs` logs WebSocket opens as well as `fetch` calls, so the live feed, order book and recent trades tools (wss://rpc.hyperliquid.xyz/ws, wss://api.hyperliquid.xyz/ws) appear in the host log. They need Node 22 or newer.
+- `judge.ts` gives the judge a mode-specific context: what is served, which hosts are allowed, and that testnet is never served.
+- Rubrics: prompts in category `direct` are written for direct mode. A prompt may carry `expectDirect`, which replaces `expect` in direct mode. The 16 `not_served` prompts have one; testnet (n07, n16) stays `not_served`, the rest become answerable.
+- Keep concurrency at 3 or lower. Hyperliquid rate-limits per IP, and a 429 is returned to the agent, not retried.
+- `direct` prompts that embed live identifiers (d01 block 1168751340, d03 tx 0xe9a48d91...11b0) were captured on 2026-10-02 from the live feed. They stay valid, but their notes describe that block/tx specifically.
 
 ## How the agent is run
 

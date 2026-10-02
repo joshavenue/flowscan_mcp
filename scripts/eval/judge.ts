@@ -40,13 +40,17 @@ const addDays = (ymd: string, n: number) => {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 };
-const contextFor = (today: string) => `Facts about the system under test (use these, not your own knowledge of Hyperliquid):
+const STRICT_SERVED = `- The agent's only tools are the flowscan MCP server in STRICT mode (44 tools named mcp__flowscan__flowscan_*), which only contacts www.flowscan.xyz.
+- NOT SERVED in strict mode (correct behaviour = say so plainly, ideally point to the flowscan.xyz page; never invent values): block details/heights, transaction details by hash, the live block/tx feed, live prices (HYPE/USD, BTC, ETH mark...), perp/spot candles, order books, an address's portfolio chart, EVM balance, Unit bridge operations, and testnet (Flowscan is mainnet-only). Priority gas is only available in HYPE; converting it to USD requires a HYPE price the server cannot provide.
+- Prices that ARE served: entry/liquidation prices in positions, tokenized-stock marks, HIP-4 outcome prices, weekend TradFi closes, Binance RWA last prices.`;
+const DIRECT_SERVED = `- The agent's only tools are the flowscan MCP server in HYPERLIQUID-DIRECT mode (58 tools named mcp__flowscan__flowscan_*): the 44 Flowscan tools (www.flowscan.xyz) plus 14 direct tools that make the same requests the Flowscan web page makes in the browser to api.hyperliquid.xyz, rpc.hyperliquid.xyz, api-ui.hyperliquid.xyz and api.hyperunit.xyz: flowscan_block, flowscan_transaction, flowscan_live_feed, flowscan_prices, flowscan_candles, flowscan_order_book, flowscan_recent_trades, flowscan_spot_tokens, flowscan_perp_dexs, flowscan_validator_summaries, flowscan_borrow_lend_reserves, flowscan_address_portfolio, flowscan_address_evm_balance, flowscan_address_unit_operations. Their results carry source (upstream URL), shownOn (Flowscan page) and mode "hyperliquid-direct".
+- In this mode blocks, transactions, the live feed, live prices, candles, order books, recent trades, validator APR/uptime, borrow/lend APYs, portfolio history, HyperEVM balance and Unit operations ARE available and should be answered with the direct tools. Still NOT available: testnet (mainnet only), and any host outside that allowlist. A direct-mode figure should be attributed to Hyperliquid's public endpoint as shown on the Flowscan page; live prices/feeds are snapshots and should carry a time.
+- There is no direct tool for arbitrary Hyperliquid info requests (e.g. userFills); address data comes from the Flowscan address tools.`;
+const contextFor = (today: string, mode: string) => `Facts about the system under test (use these, not your own knowledge of Hyperliquid):
 - Today is ${today} (UTC). "Yesterday" = ${addDays(today, -1)}. "Last N days" ranges for builder revenue end yesterday (e.g. 45 days = ${addDays(today, -45)}..${addDays(today, -1)}). Revenue windows in flowscan_revenue_summary are complete UTC days ending yesterday. Small differences in how "last week"/"last month" is interpreted are fine IF the answer states the range it used.
-- The agent's only tools are the flowscan MCP server (tools named mcp__flowscan__flowscan_*), which only contacts www.flowscan.xyz.
-- NOT SERVED by this server (correct behaviour = say so plainly, ideally point to the flowscan.xyz page; never invent values): block details/heights, transaction details by hash, the live block/tx feed, live prices (HYPE/USD, BTC, ETH mark...), perp/spot candles, order books, an address's portfolio chart, EVM balance, Unit bridge operations, and testnet (Flowscan is mainnet-only). Priority gas is only available in HYPE; converting it to USD requires a HYPE price the server cannot provide.
-- Prices that ARE served: entry/liquidation prices in positions, tokenized-stock marks, HIP-4 outcome prices, weekend TradFi closes, Binance RWA last prices.
+${mode === "direct" ? DIRECT_SERVED : STRICT_SERVED}
 - Builder names are ambiguous: two builders are named "fomo" (large Social-trading builder at 0x2a2b6b093a9813fbd8cddae800c3d17d46460d17; small one with id "fomo" at 0xb838e4d1c8bcf71fa8e63299d5aa3258c83d6adb). For a bare "fomo" the agent must either ask which or present both; silently picking one is missed_disambiguation. Presenting both and then saying which one it assumes is fine.
-- Flowscan perp openInterest is two-sided (long + short notional).
+- Flowscan perp openInterest is two-sided (long + short notional); flowscan_prices openInterestUsd (direct mode) is Hyperliquid's one-sided figure.
 - Tool results below are TRUNCATED to their first characters; a number in the answer that you cannot see in the truncated results is not automatically wrong. Only use wrong_number when the shown tool results contradict the answer, or the answer's number could not have come from any tool called. Do NOT compare against your own knowledge of real-world values.`;
 
 function buildPrompt(r: RunRecord): string {
@@ -57,9 +61,9 @@ function buildPrompt(r: RunRecord): string {
     budget -= res.length;
     return `#${i + 1} ${c.name}\n  input: ${JSON.stringify(c.input)}\n  isError: ${c.isError}\n  result (${c.resultChars} chars total, truncated): ${res}`;
   });
-  return `You are a strict, fair grader of an AI agent that answers Hyperliquid analytics questions using ONLY the Flowscan MCP tools.
+  return `You are a strict, fair grader of an AI agent that answers Hyperliquid analytics questions using ONLY the Flowscan MCP tools (server mode: ${r.mode ?? "strict"}).
 
-${contextFor(r.startedAt.slice(0, 10))}
+${contextFor(r.startedAt.slice(0, 10), r.mode ?? "strict")}
 
 ## User prompt
 ${r.prompt}

@@ -81,6 +81,9 @@ test("live feed: parses the homepage's message shapes, de-duplicates, sorts newe
         send([block(3), block(1), block(2)]); // bare array backlog
         send({ channel: "explorerBlock", data: [block(4), block(3)] }); // channel-wrapped, duplicate 3
         send([{ not: "a block" }]);
+        const tx = (h: string, time: number, type: string) => ({ time, user: "0xu", block: 4, hash: h, error: null, action: { type } });
+        send([tx("0xa", 1000, "noop"), tx("0xb", 1300, "evmRawTx"), tx("0xc", 1200, "noop")]);
+        send({ channel: "explorerTxs", data: [tx("0xb", 1300, "evmRawTx")] }); // duplicate
       }, 5);
     }
     send(s: string) {
@@ -96,18 +99,31 @@ test("live feed: parses the homepage's message shapes, de-duplicates, sorts newe
     await createServer().connect(st);
     const client = new Client({ name: "t", version: "0" });
     await client.connect(ct);
-    const r: any = await client.callTool({ name: "flowscan_live_feed", arguments: { seconds: 1, include: "blocks" } });
+    const r: any = await client.callTool({ name: "flowscan_live_feed", arguments: { seconds: 1, limit: 2 } });
     await client.close();
     const out = JSON.parse(r.content[0].text);
     assert.equal(sockets.length, 1);
     assert.equal(sockets[0].url, "wss://rpc.hyperliquid.xyz/ws");
-    assert.deepEqual(sockets[0].sent.map((x) => JSON.parse(x)), [{ method: "subscribe", subscription: { type: "explorerBlock" } }]);
+    assert.deepEqual(sockets[0].sent.map((x) => JSON.parse(x)), [
+      { method: "subscribe", subscription: { type: "explorerBlock" } },
+      { method: "subscribe", subscription: { type: "explorerTxs" } },
+    ]);
     assert.equal(sockets[0].closed, true);
-    assert.deepEqual(out.data.blocks.map((b: any) => b.height), [4, 3, 2, 1]);
+    assert.equal(out.data.blocks.count, 4);
+    assert.deepEqual(out.data.blocks.heightRange, { from: 1, to: 4 });
+    assert.deepEqual(out.data.blocks.rows.map((b: any) => b.height), [4, 3]); // limit 2
     assert.equal(out.data.latestBlock, 4);
     assert.equal(out.data.stats.medianBlockIntervalMs, 70);
-    assert.equal(out.data.blocks[0].blockTimeIso, new Date(block(4).blockTime).toISOString());
+    assert.equal(out.data.blocks.rows[0].blockTimeIso, new Date(block(4).blockTime).toISOString());
+    // txs: de-duplicated, newest first, counted over the whole sample and over the rows returned
+    assert.equal(out.data.txs.count, 3);
+    assert.deepEqual(out.data.txs.countsByType, { noop: 2, evmRawTx: 1 });
+    assert.equal(out.data.txs.timeSpanMs, 300);
+    assert.deepEqual(out.data.txs.timeSpanIso, { from: new Date(1000).toISOString(), to: new Date(1300).toISOString() });
+    assert.deepEqual(out.data.txs.rows.map((t: any) => t.hash), ["0xb", "0xc"]);
+    assert.deepEqual(out.data.txs.rowsCountsByType, { evmRawTx: 1, noop: 1 });
     assert.equal(out.mode, "hyperliquid-direct");
+    assert.ok(Math.abs(Date.now() - out.fetchedAt) < 60_000 && out.fetchedAtIso === new Date(out.fetchedAt).toISOString());
   } finally {
     globalThis.WebSocket = realWs;
   }

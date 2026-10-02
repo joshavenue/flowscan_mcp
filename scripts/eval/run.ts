@@ -8,6 +8,13 @@
  *   npx tsx scripts/eval/run.ts --run-id full --resume                 # skip ids already recorded
  *   npx tsx scripts/eval/run.ts --only b01,q12 --run-id pilot
  *   npx tsx scripts/eval/run.ts --category builders
+ *   npx tsx scripts/eval/run.ts --mcp scripts/eval/mcp.direct.json --run-id direct-r1   # Hyperliquid-direct mode
+ *
+ * The mode is read from the MCP config: FLOWSCAN_HYPERLIQUID_DIRECT=1|true in the
+ * server env means "direct" (58 tools, five allowlisted hosts), otherwise
+ * "strict" (44 tools, www.flowscan.xyz only). Prompts with an `expectDirect`
+ * rubric use it in direct mode. The mode is recorded in every record and in
+ * results/<run-id>/meta.json.
  *
  * Output: scripts/eval/results/<run-id>/<id>.json, results.jsonl (rebuilt from the
  * per-id files at the end), raw/<id>.stream.jsonl, fetch/<id>.jsonl.
@@ -36,13 +43,22 @@ const maxTurns = opt("max-turns", "10")!;
 const wallTimeout = opt("timeout", "180")!;
 const resume = flag("resume");
 const NEUTRAL_CWD = opt("cwd", "/tmp/eval-cwd")!;
+const mcpPath = path.resolve(opt("mcp", path.join(EVAL_DIR, "mcp.json"))!);
 
 export interface Prompt {
   id: string;
   category: string;
   prompt: string;
-  expect: { tools: string[]; behaviour: string; notes: string; requireAll?: string[]; ordered?: boolean; numeric?: boolean; groundTruth?: string; toolOptional?: boolean };
+  expect: Expect;
+  /** Rubric to use instead of `expect` when the server runs in Hyperliquid-direct mode. */
+  expectDirect?: Expect;
 }
+export interface Expect { tools: string[]; behaviour: string; notes: string; requireAll?: string[]; ordered?: boolean; numeric?: boolean; groundTruth?: string; toolOptional?: boolean }
+export type Mode = "strict" | "direct";
+export const MODES: Record<Mode, { tools: number; hosts: string[] }> = {
+  strict: { tools: 44, hosts: ["www.flowscan.xyz"] },
+  direct: { tools: 58, hosts: ["www.flowscan.xyz", "api.hyperliquid.xyz", "rpc.hyperliquid.xyz", "api-ui.hyperliquid.xyz", "api.hyperunit.xyz"] },
+};
 export interface ToolCall {
   id: string;
   name: string;
@@ -56,7 +72,9 @@ export interface RunRecord {
   id: string;
   category: string;
   prompt: string;
-  expect: Prompt["expect"];
+  expect: Expect;
+  mode: Mode;
+  mcpConfig: string;
   runId: string;
   model: string;
   startedAt: string;
@@ -92,7 +110,9 @@ fs.mkdirSync(NEUTRAL_CWD, { recursive: true });
 if (fs.readdirSync(NEUTRAL_CWD).length) console.warn(`warning: ${NEUTRAL_CWD} is not empty`);
 if (resume) prompts = prompts.filter((p) => !fs.existsSync(path.join(outDir, `${p.id}.json`)));
 
-const baseMcp = JSON.parse(fs.readFileSync(path.join(EVAL_DIR, "mcp.json"), "utf8"));
+const baseMcp = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+const directEnv = String(baseMcp.mcpServers?.flowscan?.env?.FLOWSCAN_HYPERLIQUID_DIRECT ?? "").toLowerCase();
+const mode: Mode = directEnv === "1" || directEnv === "true" ? "direct" : "strict";
 const systemFile = path.join(EVAL_DIR, "system.md");
 const DISALLOWED = "Bash,Read,Write,Edit,MultiEdit,Glob,Grep,WebFetch,WebSearch,Task,Agent,NotebookEdit,TodoWrite";
 
@@ -232,7 +252,9 @@ async function runOne(p: Prompt): Promise<RunRecord> {
     id: p.id,
     category: p.category,
     prompt: p.prompt,
-    expect: p.expect,
+    expect: mode === "direct" && p.expectDirect ? p.expectDirect : p.expect,
+    mode,
+    mcpConfig: mcpPath,
     runId,
     model,
     startedAt,
@@ -258,7 +280,11 @@ async function runOne(p: Prompt): Promise<RunRecord> {
 }
 
 async function main() {
-  console.log(`run ${runId}: ${prompts.length} prompts, concurrency ${concurrency}, model ${model}, out ${outDir}`);
+  console.log(`run ${runId}: ${prompts.length} prompts, mode ${mode} (${mcpPath}), concurrency ${concurrency}, model ${model}, out ${outDir}`);
+  const metaFile = path.join(outDir, "meta.json");
+  const prevMeta = fs.existsSync(metaFile) ? JSON.parse(fs.readFileSync(metaFile, "utf8")) : null;
+  if (prevMeta && prevMeta.mode !== mode) throw new Error(`run ${runId} was started in ${prevMeta.mode} mode; refusing to mix in ${mode} records`);
+  fs.writeFileSync(metaFile, JSON.stringify({ runId, mode, mcpConfig: mcpPath, model, maxTurns, expectedTools: MODES[mode].tools, allowedHosts: MODES[mode].hosts, startedAt: prevMeta?.startedAt ?? new Date().toISOString(), invocations: [...(prevMeta?.invocations ?? []), { at: new Date().toISOString(), ids: prompts.map((p) => p.id) }] }, null, 1));
   let next = 0;
   let done = 0;
   let cost = 0;

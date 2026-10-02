@@ -160,7 +160,7 @@ export function registerExplorerTools(server: McpServer): void {
     {
       title: "Live blocks and transactions (homepage feed)",
       description:
-        "The homepage Live Block Activity / Recent Blocks / Recent Transactions: listens to the Hyperliquid explorer WebSocket for `seconds` (subscribing exactly like the page), then returns the latest blocks (height, time, hash, proposer, tx count) and transactions (user, action summary, status), newest first, plus blocks/sec, txs/sec and block-interval stats. Answers 'what are the latest blocks'.",
+        "The homepage Live Block Activity / Recent Blocks / Recent Transactions: listens to the Hyperliquid explorer WebSocket for `seconds` (subscribing exactly like the page), then returns the latest blocks (height, time, hash, proposer, tx count; heightRange) and transactions (user, action summary, status; countsByType, timeSpan), newest first, plus blocks/sec, txs/sec and block-interval stats. Answers 'what are the latest blocks'.",
       inputSchema: {
         seconds: z.number().int().min(1).max(15).optional().describe("How long to listen (default 5)."),
         include: z.enum(["blocks", "txs", "both"]).optional().describe("Default both."),
@@ -221,7 +221,6 @@ export function registerExplorerTools(server: McpServer): void {
         blocks: blockList.length,
         ...(blockList.length
           ? {
-              heightRange: { from: blockList[blockList.length - 1].height, to: blockList[0].height },
               timeRange: { fromIso: iso(times[0]), toIso: iso(times[times.length - 1]) },
               blocksPerSec: spanMs > 0 ? Math.round(((blockList.length - 1) / (spanMs / 1000)) * 100) / 100 : null,
               txsPerSec: spanMs > 0 ? Math.round(txsAfterOldest / (spanMs / 1000)) : null,
@@ -230,20 +229,47 @@ export function registerExplorerTools(server: McpServer): void {
               txsInListedBlocks: blockList.reduce((s, b) => s + Number(b.numTxs ?? 0), 0),
             }
           : {}),
-        ...(include !== "blocks" ? { txFeedRows: txList.length } : {}),
       };
       const data: Rec = { stats };
+      const countByType = (xs: Rec[]) => {
+        const m: Record<string, number> = {};
+        for (const t of xs) {
+          const ty = String((t.action as Rec)?.type ?? "");
+          m[ty] = (m[ty] ?? 0) + 1;
+        }
+        return Object.fromEntries(Object.entries(m).sort((a, b) => b[1] - a[1]));
+      };
       if (include !== "txs") {
         data.latestBlock = blockList[0] ? blockList[0].height : null;
-        data.blocks = blockList.slice(0, limit).map((b) => ({ height: b.height, blockTime: b.blockTime, blockTimeIso: iso(b.blockTime), hash: b.hash, proposer: b.proposer, numTxs: b.numTxs }));
+        const rows = blockList.slice(0, limit);
+        data.blocks = {
+          count: blockList.length,
+          heightRange: blockList.length ? { from: blockList[blockList.length - 1].height, to: blockList[0].height } : null,
+          rowsReturned: rows.length,
+          rows: rows.map((b) => ({ height: b.height, blockTime: b.blockTime, blockTimeIso: iso(b.blockTime), hash: b.hash, proposer: b.proposer, numTxs: b.numTxs })),
+        };
       }
-      if (include !== "blocks") data.txs = txList.slice(0, Math.min(limit, 50)).map((t) => txRow(t, names));
+      if (include !== "blocks") {
+        const shown = txList.slice(0, Math.min(limit, 50));
+        const tt = txList.map((t) => Number(t.time)).filter((x) => Number.isFinite(x));
+        const from = tt.length ? Math.min(...tt) : null;
+        const to = tt.length ? Math.max(...tt) : null;
+        data.txs = {
+          count: txList.length,
+          countsByType: countByType(txList),
+          timeSpanMs: from !== null && to !== null ? to - from : null,
+          timeSpanIso: { from: iso(from), to: iso(to) },
+          rowsReturned: shown.length,
+          ...(shown.length < txList.length ? { rowsCountsByType: countByType(shown) } : {}),
+          rows: shown.map((t) => txRow(t, names)),
+        };
+      }
       return result(
         upstreamEnvelope(ENDPOINTS.explorerWs, `${SITE}/`, data, {
           request: subs.map((s) => ({ method: "subscribe", subscription: s })),
           note: [
             include !== "txs" ? "blocks/sec and block intervals use blockTime of the distinct blocks received (the first message is a backlog of recent blocks); txsPerSec sums their numTxs." : "",
-            include !== "blocks" ? "txs is the explorer's tx stream as shown on the homepage (a sample, not every tx); open one with flowscan_transaction." : "",
+            include !== "blocks" ? "txs is the explorer's tx stream as shown on the homepage (a sample, not every tx); count, countsByType and timeSpan cover the whole sample, rowsCountsByType the rows returned. Open one with flowscan_transaction." : "",
           ].filter(Boolean).join(" "),
         }),
       );

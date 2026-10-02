@@ -228,10 +228,12 @@ export function envelope(route: string, data: unknown, extra: Record<string, unk
 /**
  * Envelope for Hyperliquid-direct tools: `source` is the upstream URL actually
  * called, `request` the body sent (for POST/WebSocket), `shownOn` the Flowscan
- * page where the same data is visible.
+ * page where the same data is visible. `fetchedAt` is when this result was built
+ * (upstream caches are at most 5s for prices, 60s for metadata).
  */
 export function upstreamEnvelope(source: string, shownOn: string, data: unknown, extra: Record<string, unknown> = {}) {
-  return { source, shownOn, mode: "hyperliquid-direct", network: "mainnet", ...extra, data };
+  const fetchedAt = Date.now();
+  return { source, shownOn, mode: "hyperliquid-direct", network: "mainnet", fetchedAt, fetchedAtIso: new Date(fetchedAt).toISOString(), ...extra, data };
 }
 
 /** Envelope for list tools: applies `fields` to each row and reports unknown paths. */

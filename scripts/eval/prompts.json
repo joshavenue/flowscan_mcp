@@ -2625,6 +2625,18 @@
    ],
    "behaviour": "not_served",
    "notes": "Block details not served. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_block"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: answer with flowscan_block 812345678 (a valid old height); report time/tx count; no invention.",
+   "requireAll": [
+    "flowscan_block"
+   ],
+   "ordered": false,
+   "numeric": true
   }
  },
  {
@@ -2637,6 +2649,17 @@
    ],
    "behaviour": "not_served",
    "notes": "Tx details not served; suggest https://www.flowscan.xyz/tx/<hash>. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_transaction"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: call flowscan_transaction; the hash is made up, so the correct answer is a clean not-found (no invented tx).",
+   "requireAll": [
+    "flowscan_transaction"
+   ],
+   "ordered": false
   }
  },
  {
@@ -2649,6 +2672,18 @@
    ],
    "behaviour": "not_served",
    "notes": "Live prices not served. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: flowscan_prices HYPE with snapshot time.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
   }
  },
  {
@@ -2661,6 +2696,18 @@
    ],
    "behaviour": "not_served",
    "notes": "Live price not served. Deriving an implied mark from snapshot notional/size is acceptable only if clearly labelled as derived from position data, not a live price. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: flowscan_prices BTC with snapshot time.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
   }
  },
  {
@@ -2673,6 +2720,18 @@
    ],
    "behaviour": "not_served",
    "notes": "Perp candles not served. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_candles"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: flowscan_candles ETH 1h ~24 bars.",
+   "requireAll": [
+    "flowscan_candles"
+   ],
+   "ordered": false,
+   "numeric": true
   }
  },
  {
@@ -2685,6 +2744,18 @@
    ],
    "behaviour": "not_served",
    "notes": "Order books not served. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_order_book"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: flowscan_order_book BTC.",
+   "requireAll": [
+    "flowscan_order_book"
+   ],
+   "ordered": false,
+   "numeric": true
   }
  },
  {
@@ -2697,6 +2768,13 @@
    ],
    "behaviour": "not_served",
    "notes": "Flowscan has no testnet. Offering mainnet data instead is OK if clearly labelled. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_coverage"
+   ],
+   "behaviour": "not_served",
+   "notes": "Testnet is not served in any mode. Offering mainnet data is OK if clearly labelled."
   }
  },
  {
@@ -2709,6 +2787,18 @@
    ],
    "behaviour": "not_served",
    "notes": "EVM balance not served. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_address_evm_balance"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: flowscan_address_evm_balance (~0.00185 HYPE).",
+   "requireAll": [
+    "flowscan_address_evm_balance"
+   ],
+   "ordered": false,
+   "numeric": true
   }
  },
  {
@@ -2721,6 +2811,17 @@
    ],
    "behaviour": "not_served",
    "notes": "Unit bridge operations not served (ledger deposits are a different thing; mentioning them as an alternative is fine if labelled). Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_address_unit_operations"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: flowscan_address_unit_operations direction deposit; if none, say none (no invented ops).",
+   "requireAll": [
+    "flowscan_address_unit_operations"
+   ],
+   "ordered": false
   }
  },
  {
@@ -2733,6 +2834,18 @@
    ],
    "behaviour": "not_served",
    "notes": "Live block feed not served. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_live_feed"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: flowscan_live_feed.",
+   "requireAll": [
+    "flowscan_live_feed"
+   ],
+   "ordered": false,
+   "numeric": true
   }
  },
  {
@@ -2748,6 +2861,20 @@
    "behaviour": "answer",
    "notes": "Gas is available in HYPE only; must give HYPE figure and say USD conversion needs the HYPE price which isn't available. Inventing a USD figure = hallucinated_data.",
    "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_revenue_summary",
+    "flowscan_revenue_priority_gas",
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: gas in HYPE x current HYPE price from flowscan_prices; must say it uses the current, not the historical, price.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
   }
  },
  {
@@ -2760,6 +2887,18 @@
    ],
    "behaviour": "not_served",
    "notes": "Portfolio chart not served. Offering pnlSummary as an alternative is fine. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_address_portfolio"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: flowscan_address_portfolio; summarize the series with range.",
+   "requireAll": [
+    "flowscan_address_portfolio"
+   ],
+   "ordered": false,
+   "numeric": true
   }
  },
  {
@@ -2772,6 +2911,18 @@
    ],
    "behaviour": "not_served",
    "notes": "Candles not served. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_candles"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: flowscan_candles HYPE 5m.",
+   "requireAll": [
+    "flowscan_candles"
+   ],
+   "ordered": false,
+   "numeric": true
   }
  },
  {
@@ -2784,6 +2935,18 @@
    ],
    "behaviour": "not_served",
    "notes": "Live prices not served. Deriving from snapshot notional/size only if clearly labelled as derived. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: flowscan_prices ETH mark with time.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
   }
  },
  {
@@ -2796,6 +2959,17 @@
    ],
    "behaviour": "not_served",
    "notes": "Live tx feed not served. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_live_feed"
+   ],
+   "behaviour": "answer",
+   "notes": "Direct mode: flowscan_live_feed txs.",
+   "requireAll": [
+    "flowscan_live_feed"
+   ],
+   "ordered": false
   }
  },
  {
@@ -2808,6 +2982,13 @@
    ],
    "behaviour": "not_served",
    "notes": "No testnet. Flowscan's servers don't serve this (browser loads it from Hyperliquid hosts); must say so plainly, ideally point to the Flowscan page, must not invent values. Calling flowscan_coverage is fine; calling data tools is unnecessary."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_coverage"
+   ],
+   "behaviour": "not_served",
+   "notes": "Testnet is not served in any mode."
   }
  },
  {
@@ -2977,6 +3158,1080 @@
    "behaviour": "out_of_scope",
    "notes": "Should not present a fabricated figure as data; may refuse or clearly label any number as fictional placeholder (clearly labelled fiction = PARTIAL at worst).",
    "toolOptional": true
+  }
+ },
+ {
+  "id": "d01",
+  "category": "direct",
+  "prompt": "What's in hyperliquid block 1168751340?",
+  "expect": {
+   "tools": [
+    "flowscan_block"
+   ],
+   "behaviour": "answer",
+   "notes": "Captured 2026-10-02 07:24:30 UTC from the live feed: 108 txs (101 order, 7 cancel), 100% success, proposer 0xee783c36ef385640041e9f6ff91666ed42c0d831 (validator Liquid Spirit x Hydromancer x Rekt Gang). Must report tx count/breakdown/time from flowscan_block.",
+   "requireAll": [
+    "flowscan_block"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_block"
+   ],
+   "behaviour": "answer",
+   "notes": "Captured 2026-10-02 07:24:30 UTC from the live feed: 108 txs (101 order, 7 cancel), 100% success, proposer 0xee783c36ef385640041e9f6ff91666ed42c0d831 (validator Liquid Spirit x Hydromancer x Rekt Gang). Must report tx count/breakdown/time from flowscan_block.",
+   "requireAll": [
+    "flowscan_block"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d02",
+  "category": "direct",
+  "prompt": "show me block 1000000",
+  "expect": {
+   "tools": [
+    "flowscan_block"
+   ],
+   "behaviour": "answer",
+   "notes": "Old fixed block: 2023-03-02 14:07:35 UTC, 6 txs (5 cancel, 1 order on MATIC), 0 failed, hash 0x4cbc2e56...f481.",
+   "requireAll": [
+    "flowscan_block"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_block"
+   ],
+   "behaviour": "answer",
+   "notes": "Old fixed block: 2023-03-02 14:07:35 UTC, 6 txs (5 cancel, 1 order on MATIC), 0 failed, hash 0x4cbc2e56...f481.",
+   "requireAll": [
+    "flowscan_block"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d03",
+  "category": "direct",
+  "prompt": "look up tx 0xe9a48d9143ee37c5eb1e0445a9baec0103010376dee156978d6d38e402e211b0",
+  "expect": {
+   "tools": [
+    "flowscan_transaction"
+   ],
+   "behaviour": "answer",
+   "notes": "Order NXPC buy/long 3209 @ 0.23083 (~$740.73, ALO), success, block 1168751340, user 0x31ca8395cf837de08b24da3f660e77761dfb974b, 2026-10-02 07:24:30 UTC.",
+   "requireAll": [
+    "flowscan_transaction"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_transaction"
+   ],
+   "behaviour": "answer",
+   "notes": "Order NXPC buy/long 3209 @ 0.23083 (~$740.73, ALO), success, block 1168751340, user 0x31ca8395cf837de08b24da3f660e77761dfb974b, 2026-10-02 07:24:30 UTC.",
+   "requireAll": [
+    "flowscan_transaction"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d04",
+  "category": "direct",
+  "prompt": "who proposed block 1000000 and how many of its txs failed?",
+  "expect": {
+   "tools": [
+    "flowscan_block"
+   ],
+   "behaviour": "answer",
+   "notes": "Proposer 215276B4CE7C916FCDCD26B485C3E2F3EFF92B09 (raw id as returned); 0 failed of 6.",
+   "requireAll": [
+    "flowscan_block"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_block"
+   ],
+   "behaviour": "answer",
+   "notes": "Proposer 215276B4CE7C916FCDCD26B485C3E2F3EFF92B09 (raw id as returned); 0 failed of 6.",
+   "requireAll": [
+    "flowscan_block"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d05",
+  "category": "direct",
+  "prompt": "latest blocks on hyperliquid right now",
+  "expect": {
+   "tools": [
+    "flowscan_live_feed"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_live_feed; recent heights with times/tx counts. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_live_feed"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_live_feed"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_live_feed; recent heights with times/tx counts. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_live_feed"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d06",
+  "category": "direct",
+  "prompt": "how many transactions per second is hyperliquid doing right now?",
+  "expect": {
+   "tools": [
+    "flowscan_live_feed"
+   ],
+   "behaviour": "answer",
+   "notes": "live_feed stats.txsPerSec (order of 10-20k/s at time of writing) with the listen window; should note it is a short sample. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_live_feed"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_live_feed"
+   ],
+   "behaviour": "answer",
+   "notes": "live_feed stats.txsPerSec (order of 10-20k/s at time of writing) with the listen window; should note it is a short sample. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_live_feed"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d07",
+  "category": "direct",
+  "prompt": "what's the current block time on hyperliquid?",
+  "expect": {
+   "tools": [
+    "flowscan_live_feed"
+   ],
+   "behaviour": "answer",
+   "notes": "median/avg block interval (~65-70 ms) or blocks/s from live_feed. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_live_feed"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_live_feed"
+   ],
+   "behaviour": "answer",
+   "notes": "median/avg block interval (~65-70 ms) or blocks/s from live_feed. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_live_feed"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d08",
+  "category": "direct",
+  "prompt": "HYPE price?",
+  "expect": {
+   "tools": [
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_prices HYPE mark/mid. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_prices HYPE mark/mid. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d09",
+  "category": "direct",
+  "prompt": "what's btc trading at",
+  "expect": {
+   "tools": [
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_prices BTC. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_prices BTC. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d10",
+  "category": "direct",
+  "prompt": "price of xyz:TSLA",
+  "expect": {
+   "tools": [
+    "flowscan_prices",
+    "flowscan_weekend_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_prices coins=['xyz:TSLA'] (mark/mid/oracle). Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_prices",
+    "flowscan_weekend_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_prices coins=['xyz:TSLA'] (mark/mid/oracle). Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d11",
+  "category": "direct",
+  "prompt": "ETH 1h candles for the last 24 hours",
+  "expect": {
+   "tools": [
+    "flowscan_candles"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_candles coin ETH interval 1h ~24 bars; summarize open/close/high/low/change with UTC range.",
+   "requireAll": [
+    "flowscan_candles"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_candles"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_candles coin ETH interval 1h ~24 bars; summarize open/close/high/low/change with UTC range.",
+   "requireAll": [
+    "flowscan_candles"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d12",
+  "category": "direct",
+  "prompt": "BTC order book, top 5 levels each side",
+  "expect": {
+   "tools": [
+    "flowscan_order_book"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_order_book BTC depth 5; best bid/ask, spread. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_order_book"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_order_book"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_order_book BTC depth 5; best bid/ask, spread. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_order_book"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d13",
+  "category": "direct",
+  "prompt": "show me the most recent trades on HYPE",
+  "expect": {
+   "tools": [
+    "flowscan_recent_trades"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_recent_trades HYPE (up to 30). Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_recent_trades"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_recent_trades"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_recent_trades HYPE (up to 30). Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_recent_trades"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d14",
+  "category": "direct",
+  "prompt": "what is @702",
+  "expect": {
+   "tools": [
+    "flowscan_spot_tokens",
+    "flowscan_spot_stocks"
+   ],
+   "behaviour": "answer",
+   "notes": "@702 is the NVDAX/USDC spot pair (Wrapped NVIDIA xStock)."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_spot_tokens",
+    "flowscan_spot_stocks"
+   ],
+   "behaviour": "answer",
+   "notes": "@702 is the NVDAX/USDC spot pair (Wrapped NVIDIA xStock)."
+  }
+ },
+ {
+  "id": "d15",
+  "category": "direct",
+  "prompt": "which perp dexs exist on hyperliquid?",
+  "expect": {
+   "tools": [
+    "flowscan_perp_dexs",
+    "flowscan_hip3_overview"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_perp_dexs: main + HIP-3 dexes with prefixes/display names/collateral; hip3_overview alone is acceptable only if it lists the DEXs and notes the main dex.",
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_perp_dexs",
+    "flowscan_hip3_overview"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_perp_dexs: main + HIP-3 dexes with prefixes/display names/collateral; hip3_overview alone is acceptable only if it lists the DEXs and notes the main dex.",
+   "numeric": true
+  }
+ },
+ {
+  "id": "d16",
+  "category": "direct",
+  "prompt": "validator APRs and uptime this week",
+  "expect": {
+   "tools": [
+    "flowscan_validator_summaries"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_validator_summaries window week; APR % and uptime %; avg APR ~1.7% at time of writing.",
+   "requireAll": [
+    "flowscan_validator_summaries"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_validator_summaries"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_validator_summaries window week; APR % and uptime %; avg APR ~1.7% at time of writing.",
+   "requireAll": [
+    "flowscan_validator_summaries"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d17",
+  "category": "direct",
+  "prompt": "which validator has the highest predicted APR right now?",
+  "expect": {
+   "tools": [
+    "flowscan_validator_summaries"
+   ],
+   "behaviour": "answer",
+   "notes": "sortBy apr desc; name + APR + window. Should exclude/flag jailed ones.",
+   "requireAll": [
+    "flowscan_validator_summaries"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_validator_summaries"
+   ],
+   "behaviour": "answer",
+   "notes": "sortBy apr desc; name + APR + window. Should exclude/flag jailed ones.",
+   "requireAll": [
+    "flowscan_validator_summaries"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d18",
+  "category": "direct",
+  "prompt": "what are the borrow/lend APYs on hypercore?",
+  "expect": {
+   "tools": [
+    "flowscan_borrow_lend_reserves"
+   ],
+   "behaviour": "answer",
+   "notes": "Per token supply/borrow APY, utilization.",
+   "requireAll": [
+    "flowscan_borrow_lend_reserves"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_borrow_lend_reserves"
+   ],
+   "behaviour": "answer",
+   "notes": "Per token supply/borrow APY, utilization.",
+   "requireAll": [
+    "flowscan_borrow_lend_reserves"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d19",
+  "category": "direct",
+  "prompt": "USDC supply APY on Hyperliquid borrow/lend",
+  "expect": {
+   "tools": [
+    "flowscan_borrow_lend_reserves"
+   ],
+   "behaviour": "answer",
+   "notes": "token USDC supply APY.",
+   "requireAll": [
+    "flowscan_borrow_lend_reserves"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_borrow_lend_reserves"
+   ],
+   "behaviour": "answer",
+   "notes": "token USDC supply APY.",
+   "requireAll": [
+    "flowscan_borrow_lend_reserves"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d20",
+  "category": "direct",
+  "prompt": "portfolio value history for 0x010461c14e146ac35fe42271bdc1134ee31c703a",
+  "expect": {
+   "tools": [
+    "flowscan_address_portfolio"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_address_portfolio (default allTime or a stated window): latest/min/max account value, PnL, with ISO range.",
+   "requireAll": [
+    "flowscan_address_portfolio"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_address_portfolio"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_address_portfolio (default allTime or a stated window): latest/min/max account value, PnL, with ISO range.",
+   "requireAll": [
+    "flowscan_address_portfolio"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d21",
+  "category": "direct",
+  "prompt": "HyperEVM HYPE balance of 0x010461c14e146ac35fe42271bdc1134ee31c703a",
+  "expect": {
+   "tools": [
+    "flowscan_address_evm_balance"
+   ],
+   "behaviour": "answer",
+   "notes": "~0.00185249 HYPE at time of writing; must not confuse with HyperCore balances.",
+   "requireAll": [
+    "flowscan_address_evm_balance"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_address_evm_balance"
+   ],
+   "behaviour": "answer",
+   "notes": "~0.00185249 HYPE at time of writing; must not confuse with HyperCore balances.",
+   "requireAll": [
+    "flowscan_address_evm_balance"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d22",
+  "category": "direct",
+  "prompt": "Unit bridge operations for 0x5b5d51203a0f9079f8aeb098a6523a13f298c060",
+  "expect": {
+   "tools": [
+    "flowscan_address_unit_operations"
+   ],
+   "behaviour": "answer",
+   "notes": "2 BTC withdrawals (0.01425429 BTC total, May 2025), USD at current prices (label as current-price valuation).",
+   "requireAll": [
+    "flowscan_address_unit_operations"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_address_unit_operations"
+   ],
+   "behaviour": "answer",
+   "notes": "2 BTC withdrawals (0.01425429 BTC total, May 2025), USD at current prices (label as current-price valuation).",
+   "requireAll": [
+    "flowscan_address_unit_operations"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d23",
+  "category": "direct",
+  "prompt": "current BTC funding rate, hourly and annualized",
+  "expect": {
+   "tools": [
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "fundingHourly and fundingAprPct from flowscan_prices. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "fundingHourly and fundingAprPct from flowscan_prices. Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d24",
+  "category": "direct",
+  "prompt": "top 5 perp markets by 24h volume right now",
+  "expect": {
+   "tools": [
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_prices sortBy volume limit 5 (main dex; mention if HIP-3 excluded). Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_prices sortBy volume limit 5 (main dex; mention if HIP-3 excluded). Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d25",
+  "category": "direct",
+  "prompt": "HYPE daily candles for the last 30 days: what were the high and low?",
+  "expect": {
+   "tools": [
+    "flowscan_candles"
+   ],
+   "behaviour": "answer",
+   "notes": "candles HYPE 1d ~30 bars; summary high/low with dates.",
+   "requireAll": [
+    "flowscan_candles"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_candles"
+   ],
+   "behaviour": "answer",
+   "notes": "candles HYPE 1d ~30 bars; summary high/low with dates.",
+   "requireAll": [
+    "flowscan_candles"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d26",
+  "category": "direct",
+  "prompt": "order book for the HIP-4 Arsenal YES outcome (#14730)",
+  "expect": {
+   "tools": [
+    "flowscan_order_book",
+    "flowscan_hip4_markets"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_order_book coin '#14730'.",
+   "requireAll": [
+    "flowscan_order_book"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_order_book",
+    "flowscan_hip4_markets"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_order_book coin '#14730'.",
+   "requireAll": [
+    "flowscan_order_book"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d27",
+  "category": "direct",
+  "prompt": "how much has ETH moved in the last 24h?",
+  "expect": {
+   "tools": [
+    "flowscan_prices",
+    "flowscan_candles"
+   ],
+   "behaviour": "answer",
+   "notes": "change24hPct from flowscan_prices (or candles). Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_prices",
+    "flowscan_candles"
+   ],
+   "behaviour": "answer",
+   "notes": "change24hPct from flowscan_prices (or candles). Live data: state the snapshot time; cite the Flowscan page (shownOn) and/or that it comes from Hyperliquid's public endpoint.",
+   "numeric": true
+  }
+ },
+ {
+  "id": "d28",
+  "category": "direct",
+  "prompt": "what was the 7-day pnl of vault 0x010461c14e146ac35fe42271bdc1134ee31c703a?",
+  "expect": {
+   "tools": [
+    "flowscan_address_portfolio"
+   ],
+   "behaviour": "answer",
+   "notes": "address_portfolio window week, PnL over the window with dates.",
+   "requireAll": [
+    "flowscan_address_portfolio"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_address_portfolio"
+   ],
+   "behaviour": "answer",
+   "notes": "address_portfolio window week, PnL over the window with dates.",
+   "requireAll": [
+    "flowscan_address_portfolio"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d29",
+  "category": "direct",
+  "prompt": "what's the mark price of the NVDAX spot token?",
+  "expect": {
+   "tools": [
+    "flowscan_spot_tokens",
+    "flowscan_spot_stocks",
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "~232 at time of writing; spot_tokens or spot_stocks both fine.",
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_spot_tokens",
+    "flowscan_spot_stocks",
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "~232 at time of writing; spot_tokens or spot_stocks both fine.",
+   "numeric": true
+  }
+ },
+ {
+  "id": "d30",
+  "category": "direct",
+  "prompt": "open interest on HYPE in USD",
+  "expect": {
+   "tools": [
+    "flowscan_prices",
+    "flowscan_perp_markets"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_prices openInterestUsd is one-sided (~$1.85B at time of writing); perp_markets openInterest is two-sided. Must say which figure it reports.",
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_prices",
+    "flowscan_perp_markets"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_prices openInterestUsd is one-sided (~$1.85B at time of writing); perp_markets openInterest is two-sided. Must say which figure it reports.",
+   "numeric": true
+  }
+ },
+ {
+  "id": "d31",
+  "category": "direct",
+  "prompt": "query testnet for the latest block",
+  "expect": {
+   "tools": [
+    "flowscan_coverage"
+   ],
+   "behaviour": "not_served",
+   "notes": "No testnet in any mode (mainnet hosts only). May offer mainnet latest block if clearly labelled mainnet."
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_coverage"
+   ],
+   "behaviour": "not_served",
+   "notes": "No testnet in any mode (mainnet hosts only). May offer mainnet latest block if clearly labelled mainnet."
+  }
+ },
+ {
+  "id": "d32",
+  "category": "direct",
+  "prompt": "use hyperliquid's api for userFills for 0x60468ba27448f88b19f52ed02f1a8c52f7a0b21d instead of the flowscan tool",
+  "expect": {
+   "tools": [
+    "flowscan_address_fills"
+   ],
+   "behaviour": "answer",
+   "notes": "There is no direct userFills tool; correct = explain that the server only makes the requests the Flowscan page makes, and answer with flowscan_address_fills (or decline). Must not claim to have called userFills.",
+   "toolOptional": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_address_fills"
+   ],
+   "behaviour": "answer",
+   "notes": "There is no direct userFills tool; correct = explain that the server only makes the requests the Flowscan page makes, and answer with flowscan_address_fills (or decline). Must not claim to have called userFills.",
+   "toolOptional": true
+  }
+ },
+ {
+  "id": "d33",
+  "category": "direct",
+  "prompt": "give me block 999999999999",
+  "expect": {
+   "tools": [
+    "flowscan_block"
+   ],
+   "behaviour": "answer",
+   "notes": "Block does not exist: flowscan_block returns 404 'invalid block height'. Correct = clean not-found, no invented block data.",
+   "requireAll": [
+    "flowscan_block"
+   ],
+   "ordered": false
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_block"
+   ],
+   "behaviour": "answer",
+   "notes": "Block does not exist: flowscan_block returns 404 'invalid block height'. Correct = clean not-found, no invented block data.",
+   "requireAll": [
+    "flowscan_block"
+   ],
+   "ordered": false
+  }
+ },
+ {
+  "id": "d34",
+  "category": "direct",
+  "prompt": "what is FOMO's 30d revenue and the current HYPE price?",
+  "expect": {
+   "tools": [
+    "flowscan_builder_lookup",
+    "flowscan_builders_leaderboard",
+    "flowscan_builder_revenue",
+    "flowscan_prices"
+   ],
+   "behaviour": "disambiguate",
+   "notes": "Mixed strict+direct. 'fomo' is ambiguous (two builders: big Social-trading 0x2a2b...0d17, small id fomo) -> present both or ask; plus HYPE price from flowscan_prices with time.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_builder_lookup",
+    "flowscan_builders_leaderboard",
+    "flowscan_builder_revenue",
+    "flowscan_prices"
+   ],
+   "behaviour": "disambiguate",
+   "notes": "Mixed strict+direct. 'fomo' is ambiguous (two builders: big Social-trading 0x2a2b...0d17, small id fomo) -> present both or ask; plus HYPE price from flowscan_prices with time.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d35",
+  "category": "direct",
+  "prompt": "convert yesterday's priority gas to USD at the current HYPE price",
+  "expect": {
+   "tools": [
+    "flowscan_revenue_summary",
+    "flowscan_revenue_priority_gas",
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "Mixed: priority gas (HYPE) for 2026-10-01 from revenue tools x current HYPE price from flowscan_prices. Must label that it uses the CURRENT price, not the historical daily price.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_revenue_summary",
+    "flowscan_revenue_priority_gas",
+    "flowscan_prices"
+   ],
+   "behaviour": "answer",
+   "notes": "Mixed: priority gas (HYPE) for 2026-10-01 from revenue tools x current HYPE price from flowscan_prices. Must label that it uses the CURRENT price, not the historical daily price.",
+   "requireAll": [
+    "flowscan_prices"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d36",
+  "category": "direct",
+  "prompt": "biggest BTC long right now and how far it is from liquidation at the current mark",
+  "expect": {
+   "tools": [
+    "flowscan_perp_positions",
+    "flowscan_prices",
+    "flowscan_address_summary"
+   ],
+   "behaviour": "answer",
+   "notes": "Mixed: perp_positions BTC long #1 (liq price) + flowscan_prices BTC mark; distance in % with times of both snapshots.",
+   "requireAll": [
+    "flowscan_perp_positions"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_perp_positions",
+    "flowscan_prices",
+    "flowscan_address_summary"
+   ],
+   "behaviour": "answer",
+   "notes": "Mixed: perp_positions BTC long #1 (liq price) + flowscan_prices BTC mark; distance in % with times of both snapshots.",
+   "requireAll": [
+    "flowscan_perp_positions"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d37",
+  "category": "direct",
+  "prompt": "how much HYPE is delegated to Hyper Foundation 2 and what's its APR?",
+  "expect": {
+   "tools": [
+    "flowscan_staking_overview",
+    "flowscan_validator_stakers",
+    "flowscan_validator_summaries"
+   ],
+   "behaviour": "answer",
+   "notes": "Mixed: stake (~54.0M HYPE) + predicted APR from validator_summaries (window stated).",
+   "requireAll": [
+    "flowscan_validator_summaries"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_staking_overview",
+    "flowscan_validator_stakers",
+    "flowscan_validator_summaries"
+   ],
+   "behaviour": "answer",
+   "notes": "Mixed: stake (~54.0M HYPE) + predicted APR from validator_summaries (window stated).",
+   "requireAll": [
+    "flowscan_validator_summaries"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "d38",
+  "category": "direct",
+  "prompt": "5 minute candles for xyz:GOLD over the past 2 hours",
+  "expect": {
+   "tools": [
+    "flowscan_candles"
+   ],
+   "behaviour": "answer",
+   "notes": "candles coin xyz:GOLD interval 5m ~24 bars.",
+   "requireAll": [
+    "flowscan_candles"
+   ],
+   "ordered": false,
+   "numeric": true
+  },
+  "expectDirect": {
+   "tools": [
+    "flowscan_candles"
+   ],
+   "behaviour": "answer",
+   "notes": "candles coin xyz:GOLD interval 5m ~24 bars.",
+   "requireAll": [
+    "flowscan_candles"
+   ],
+   "ordered": false,
+   "numeric": true
   }
  }
 ]
