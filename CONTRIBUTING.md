@@ -24,7 +24,7 @@ Rules for new tools:
 1. Add it to the matching file in `src/tools/` with `defineTool` (from `src/register.ts`). Accept the standard `fields`/`limit`/`offset` inputs from `src/shape.ts` when the result can be large. Wrap a Flowscan result with `envelope(route, data)`; wrap a direct-mode result with `upstreamEnvelope(upstreamUrl, flowscanPageUrl, data, { request })` and add the tool name to `DIRECT_TOOLS` in `src/tools/direct.ts`.
 2. Say in the description which Flowscan page the data mirrors and when to prefer this tool. Do not add a "Source: ..." sentence; the route is reported in the `source` field of every result.
 3. Add the tool to its page in `src/coverage.ts` (direct-mode tools only in the `direct` branch, and remove the item from that mode's `notServed`).
-4. Add it to the right tools table in `README.md` (strict tools, or "Hyperliquid-direct tools") and, if it answers a common question, to `skills/flowscan/SKILL.md`.
+4. Add it to the right tools table in `docs/reference.md` (strict tools, or "Hyperliquid-direct tools") and, if it answers a common question, to `skills/flowscan/SKILL.md`.
 5. Add a call to the smoke test in `scripts/smoke.ts` (it fails if any tool is untested; direct tools go in `directCases`), and a scenario in `scripts/qa/scenarios.ts` if the tool answers a typical agent question (direct-mode scenarios are marked `upstream: true` and numbered from 101).
 
 ## Checks
