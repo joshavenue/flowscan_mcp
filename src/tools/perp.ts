@@ -14,7 +14,7 @@ function snapshotAge(ts: unknown): Rec {
 }
 
 /** Resolve a user-typed market against the snapshot's market list (case-insensitive, 'TSLA' -> 'xyz:TSLA'). */
-async function marketCandidates(q: string): Promise<{ exact: string[]; suggestions: string[] }> {
+export async function marketCandidates(q: string): Promise<{ exact: string[]; suggestions: string[] }> {
   const data = (await get("/api/perp-snapshot/markets")) as Rec;
   const names = ((data.markets as Rec[]) ?? []).map((m) => String(m.market));
   const ql = q.trim().toLowerCase();

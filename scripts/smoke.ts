@@ -57,7 +57,7 @@ const MAX_CHARS = 40_000;
 const hip4: { outcomeId?: number; yesAssetId?: string; noAssetId?: string } = {};
 /** Mode under test: same switch the server reads. */
 const DIRECT = /^(1|true)$/i.test((process.env.FLOWSCAN_HYPERLIQUID_DIRECT ?? "").trim());
-const STRICT_TOOL_COUNT = 44;
+const STRICT_TOOL_COUNT = 45;
 const DIRECT_TOOL_COUNT = 14;
 const UPSTREAM_HOSTS = ["api.hyperliquid.xyz", "rpc.hyperliquid.xyz", "api-ui.hyperliquid.xyz", "api.hyperunit.xyz"];
 const ALLOWED_HOSTS = new Set(["www.flowscan.xyz", ...(DIRECT ? UPSTREAM_HOSTS : [])]);
@@ -155,6 +155,52 @@ const cases: Case[] = [
     check: (d) => assert(d.data.positions.every((p: Json) => p.side === "short" && p.notionalSize >= 10000), "filters ignored"),
   },
   { tool: "flowscan_address_perp_positions", args: { address: VAULT, limit: 10 }, check: (d) => assert(d.data.positions.length === 10 && d.data.totalPositions > 10, "address positions") },
+
+  // terminal market history (/terminal)
+  {
+    tool: "flowscan_market_history",
+    args: { kind: "funding", coin: "BTC" },
+    check: (d) => {
+      const s = d.summary;
+      assert(d.shownOn === "https://www.flowscan.xyz/terminal" && d.request?.type === "fundingHistory" && d.coin === "BTC", "funding envelope");
+      assert(s.count >= 20 && s.count <= 26 && d.data.length === s.count, `1d funding rows ${s?.count}`);
+      assert(d.data.every((r: Json, i: number) => r.timeIso === new Date(r.time).toISOString() && typeof r.fundingRate === "number" && (i === 0 || d.data[i - 1].time > r.time)), "rows newest first with ISO twins");
+      assert(s.latestRate === d.data[0].fundingRate && Math.abs(s.annualizedMeanRate - s.meanHourlyRate * 24 * 365) <= Math.abs(s.annualizedMeanRate) * 1e-4 + 1e-12, "funding summary");
+    },
+  },
+  {
+    tool: "flowscan_market_history",
+    label: "slippage eth 1m",
+    args: { kind: "slippage", coin: "eth", amount: "1m", limit: 10 },
+    check: (d) => {
+      const s = d.summary;
+      assert(d.coin === "ETH" && d.amountUsd === 1_000_000 && d.request?.amount === 1_000_000 && s.amountUsd === 1_000_000, "slippage amount/coin");
+      assert(s.count >= 80 && d.data.length === 10 && d.paging.total === s.count, `slippage rows ${s?.count}`);
+      assert(s.latest.buySlippageBps === d.data[0].buySlippageBps && s.buySlippageBps.median <= s.buySlippageBps.max && s.halfSpreadBps.mean >= 0, "slippage summary");
+    },
+  },
+  {
+    tool: "flowscan_market_history",
+    label: "HIP-3 bare tsla",
+    args: { kind: "funding", coin: "tsla", limit: 3 },
+    check: (d) => assert(d.coin === "xyz:TSLA" && d.request.coin === "xyz:TSLA" && /resolved/.test(d.resolvedNote ?? "") && d.summary.count > 0, "TSLA not resolved"),
+  },
+  {
+    tool: "flowscan_market_history",
+    label: "14d funding",
+    args: { kind: "funding", coin: "ETH", range: "14d", limit: 5 },
+    check: (d) => {
+      assert(d.summary.count >= 330 && d.summary.count <= 340 && d.paging.total === d.summary.count && d.data.length === 5, `14d funding rows ${d.summary?.count}`);
+      assert(Date.parse(d.summary.to) - Date.parse(d.summary.from) > 13 * DAY, "14d span");
+    },
+  },
+  {
+    tool: "flowscan_market_history",
+    label: "14d slippage HIP-3 default page",
+    args: { kind: "slippage", coin: "xyz:TSLA", range: "14d" },
+    check: (d) => assert(d.dex === "xyz" && d.data.length === 100 && d.summary.count > 1000 && d.paging.hasMore, "14d slippage paging"),
+  },
+  { tool: "flowscan_market_history", label: "unknown coin", args: { kind: "funding", coin: "NOPE_NOT_A_MARKET" }, expectError: true },
 
   // address
   {

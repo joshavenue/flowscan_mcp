@@ -6,9 +6,9 @@
 
 | file | purpose |
 | --- | --- |
-| `prompts.json` | 258 prompts `{id, category, prompt, expect, expectDirect?}`: 220 strict-mode prompts plus 38 in category `direct`. `expect = {tools (acceptable, any-of), behaviour: answer \| disambiguate \| not_served \| out_of_scope, notes, requireAll?, ordered?, numeric?, groundTruth?, toolOptional?}`; `expectDirect` (same shape) replaces it in Hyperliquid-direct mode |
+| `prompts.json` | 262 prompts `{id, category, prompt, expect, expectDirect?}`: 224 strict-mode prompts (incl. 4 in category `terminal`, added after the 2026-10-02 runs) plus 38 in category `direct`. `expect = {tools (acceptable, any-of), behaviour: answer \| disambiguate \| not_served \| out_of_scope, notes, requireAll?, ordered?, numeric?, groundTruth?, toolOptional?}`; `expectDirect` (same shape) replaces it in Hyperliquid-direct mode |
 | `mcp.json` | the MCP config the agent uses by default: strict mode (`node dist/index.js`, `FLOWSCAN_MAX_CONCURRENCY=2`) |
-| `mcp.direct.json` | the same plus `FLOWSCAN_HYPERLIQUID_DIRECT=1` (58 tools); pass it with `run.ts --mcp` |
+| `mcp.direct.json` | the same plus `FLOWSCAN_HYPERLIQUID_DIRECT=1` (59 tools); pass it with `run.ts --mcp` |
 | `system.md` | appended system prompt: the body of `skills/flowscan/SKILL.md` (no frontmatter) plus one instruction line. It is a copy, so regenerate it after editing the skill (see below) |
 | `run.ts` | runs the agent per prompt and records tool calls, results, final answer, cost, turns, hosts |
 | `fetch-log.mjs` | preloaded into each MCP server process (`node --import`); logs the host of every outbound `fetch` and WebSocket, so the run proves which hosts were contacted |
@@ -51,7 +51,7 @@ npx tsx scripts/eval/judge.ts --run-id after-r3 && npx tsx scripts/eval/report.t
 
 ## Running in Hyperliquid-direct mode
 
-The server's opt-in direct mode (`FLOWSCAN_HYPERLIQUID_DIRECT=1`, 58 tools) is selected with `--mcp`:
+The server's opt-in direct mode (`FLOWSCAN_HYPERLIQUID_DIRECT=1`, 59 tools) is selected with `--mcp`:
 
 ```sh
 npx tsx scripts/eval/run.ts --run-id direct-r1 --mcp scripts/eval/mcp.direct.json --concurrency 3 [--only ...]
@@ -60,7 +60,7 @@ npx tsx scripts/eval/report.ts --run-id direct-r1          # mode read from resu
 ```
 
 - `mcp.direct.json` is `mcp.json` plus `FLOWSCAN_HYPERLIQUID_DIRECT=1`. `run.ts` derives the mode from the config's server env, writes it to `results/<run-id>/meta.json` and to every record (`mode`, `mcpConfig`), and refuses to mix modes in one run dir.
-- `report.ts` takes the allowed hosts and the expected tool count from the mode. Strict: www.flowscan.xyz, 44 tools. Direct: www.flowscan.xyz, api.hyperliquid.xyz, rpc.hyperliquid.xyz, api-ui.hyperliquid.xyz and api.hyperunit.xyz, 58 tools. `--mode strict|direct` overrides this, and must match the records. Any other host, or a different tool count, is flagged.
+- `report.ts` takes the allowed hosts and the expected tool count from the mode. Strict: www.flowscan.xyz, 45 tools. Direct: www.flowscan.xyz, api.hyperliquid.xyz, rpc.hyperliquid.xyz, api-ui.hyperliquid.xyz and api.hyperunit.xyz, 59 tools. `--mode strict|direct` overrides this, and must match the records. Any other host, or a different tool count, is flagged.
 - `fetch-log.mjs` logs WebSocket opens as well as `fetch` calls, so the live feed, order book and recent trades tools (wss://rpc.hyperliquid.xyz/ws, wss://api.hyperliquid.xyz/ws) appear in the host log. They need Node 22 or newer.
 - `judge.ts` gives the judge a mode-specific context: what is served, which hosts are allowed, and that testnet is never served.
 - Rubrics: prompts in category `direct` are written for direct mode. A prompt may carry `expectDirect`, which replaces `expect` in direct mode. The 16 `not_served` prompts have one; testnet (n07, n16) stays `not_served`, the rest become answerable.
@@ -83,7 +83,7 @@ timeout 180 claude -p "<prompt>" --model sonnet \
 
 from `/tmp/eval-cwd`. The per-prompt MCP config is `mcp.json` plus the fetch logger. Two flags go beyond the original plan:
 
-- `--tools ""`: without it Claude Code still exposes ~30 non-coding built-ins (Artifact, Workflow, SendMessage, ToolSearch, ...), and the flowscan tools are deferred behind ToolSearch. With it, the init message lists exactly the 44 flowscan tools, loaded eagerly.
+- `--tools ""`: without it Claude Code still exposes ~30 non-coding built-ins (Artifact, Workflow, SendMessage, ToolSearch, ...), and the flowscan tools are deferred behind ToolSearch. With it, the init message lists exactly the 45 flowscan tools, loaded eagerly.
 - `--disable-slash-commands`: stops user/plugin skills from appearing in the agent's context.
 
 A prompt is retried once if the CLI crashes or times out (no `result` event, or exit 124), never because of a bad answer.

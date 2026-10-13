@@ -24,6 +24,11 @@ export function getCoverage(direct: boolean = hyperliquidDirectEnabled()) {
         : "24h revenue panel, stablecoin perp margin, perp positioning snapshot (per-market long/short, largest positions, per-address positions). The homepage's live block/transaction feed is not served (see notServed)",
       tools: ["flowscan_stablecoin_margin", "flowscan_perp_markets", "flowscan_perp_positions", "flowscan_address_perp_positions", "flowscan_revenue_summary", "flowscan_revenue_hypercore_fees", ...(direct ? ["flowscan_live_feed", "flowscan_prices"] : [])],
     },
+    {
+      path: "/terminal",
+      shows: "Trading terminal: funding-rate history and order-book slippage/spread history per market; its chart, order book and trades are served in direct mode via flowscan_candles / flowscan_order_book / flowscan_recent_trades; positions via flowscan_perp_*",
+      tools: ["flowscan_market_history", "flowscan_perp_markets", "flowscan_perp_positions", ...(direct ? ["flowscan_candles", "flowscan_order_book", "flowscan_recent_trades", "flowscan_prices"] : [])],
+    },
     { path: "/revenue", shows: `Daily HyperCore revenue (native vs HIP-3), deployer fees by DEX, priority gas (write/read) with top users${direct ? "; the HYPE/USD price used to value priority gas" : ""}`, tools: ["flowscan_revenue_hypercore_fees", "flowscan_revenue_deployer_fees", "flowscan_revenue_priority_gas", "flowscan_revenue_summary", ...(direct ? ["flowscan_prices"] : [])] },
     {
       path: "/address/{address}",

@@ -12,6 +12,7 @@ import { registerNetworkTools } from "./tools/network.js";
 import { registerPerpTools } from "./tools/perp.js";
 import { registerRevenueTools } from "./tools/revenue.js";
 import { registerSpotStockTools } from "./tools/spotStocks.js";
+import { registerTerminalTools } from "./tools/terminal.js";
 import { registerWeekendTools } from "./tools/weekend.js";
 import { registerDirectTools } from "./tools/direct.js";
 import { hyperliquidDirectEnabled, UPSTREAM_HOSTS } from "./upstream.js";
@@ -28,7 +29,7 @@ const GUIDE_LINE = `For tool-selection rules call the prompt ${GUIDE_PROMPT} or 
 export function serverInstructions(direct: boolean): string {
   const body = direct
     ? `Read-only tools for what www.flowscan.xyz (Hyperliquid explorer) shows: revenue, staking, peers, HIP-3/HIP-4 markets, tokenized stocks, weekend trading, builders, address data, plus (hyperliquid-direct mode) blocks, txs, live feed, prices, candles, order books, trades, validator APR, borrow/lend APYs. MAINNET only. Hosts: flowscan.xyz plus exactly ${UPSTREAM_HOSTS.join(", ")}.`
-    : "Read-only tools for what www.flowscan.xyz (Hyperliquid explorer) shows: revenue, staking, peers, HIP-3 perp DEXs, HIP-4 outcome markets, tokenized stocks, weekend trading, builders and per-address account data. MAINNET only; data comes exclusively from flowscan.xyz routes (no block/tx lookups or live prices in this mode).";
+    : "Read-only tools for what www.flowscan.xyz (Hyperliquid explorer) shows: revenue, staking, peers, HIP-3 perp DEXs, HIP-4 outcome markets, tokenized stocks, weekend trading, funding/slippage history, builders and per-address account data. MAINNET only; data comes exclusively from flowscan.xyz routes (no block/tx lookups or live prices in this mode).";
   return `${body} Call flowscan_coverage first if unsure which tool fits.\n${GUIDE_LINE}`;
 }
 
@@ -66,6 +67,7 @@ export function createServer(): McpServer {
   registerNetworkTools(server);
   registerRevenueTools(server);
   registerPerpTools(server);
+  registerTerminalTools(server);
   registerAddressTools(server);
   registerSpotStockTools(server);
   registerWeekendTools(server);

@@ -10,7 +10,7 @@ startup_timeout_sec = 120
 # Flowscan requests can take up to 45 s; Codex's default tool timeout is 60 s.
 tool_timeout_sec = 120
 
-# Opt-in Hyperliquid-direct mode (58 tools instead of 44). Uncomment to enable:
+# Opt-in Hyperliquid-direct mode (59 tools instead of 45). Uncomment to enable:
 # [mcp_servers.flowscan.env]
 # FLOWSCAN_HYPERLIQUID_DIRECT = "1"
 

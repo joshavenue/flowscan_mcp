@@ -7,8 +7,8 @@
  *   npx tsx scripts/eval/report.ts --run-id full
  *   npx tsx scripts/eval/report.ts --run-id direct-r1 --mode direct   # mode is normally read from meta.json / the records
  *
- * The mode sets the allowed hosts and the expected tool count (strict: www.flowscan.xyz, 44;
- * direct: www.flowscan.xyz + api/rpc/api-ui.hyperliquid.xyz + api.hyperunit.xyz, 58).
+ * The mode sets the allowed hosts and the expected tool count (strict: www.flowscan.xyz, 45;
+ * direct: www.flowscan.xyz + api/rpc/api-ui.hyperliquid.xyz + api.hyperunit.xyz, 59).
  */
 import fs from "node:fs";
 import path from "node:path";

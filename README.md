@@ -2,7 +2,7 @@
 
 An MCP server that exposes the data shown on [flowscan.xyz](https://www.flowscan.xyz) as tools for AI agents. Flowscan is a real-time explorer and analytics site for the Hyperliquid blockchain (HyperCore, HIP-3 perp DEXs and HIP-4 outcome markets). It is not related to the Flow blockchain. With this server an agent can answer questions such as "what did Hyperliquid earn in fees yesterday", "who holds the largest BTC longs", "which builder code earned the most this week" or "what positions does 0x... have open", using the same numbers a person would see on the site.
 
-- 44 read-only tools, grouped by Flowscan page; 58 with the opt-in [Hyperliquid-direct mode](#two-modes)
+- 45 read-only tools, grouped by Flowscan page; 59 with the opt-in [Hyperliquid-direct mode](#two-modes)
 - Hyperliquid mainnet only (Flowscan has no testnet mode)
 - No API key
 - stdio transport by default, Streamable HTTP with `--http` ([Remote (HTTP) and Docker](#remote-http-and-docker)); Node.js 20 or newer (22 or newer for the three WebSocket tools of direct mode)
@@ -18,10 +18,10 @@ The server has two modes. The default is strict; the second is opt-in.
 | | Strict (default) | Hyperliquid-direct (opt-in) |
 | --- | --- | --- |
 | Enable | nothing to set | `FLOWSCAN_HYPERLIQUID_DIRECT=1` (or `true`) in the server's environment |
-| Tools | 44 | 58: the same 44 plus 14 [Hyperliquid-direct tools](#hyperliquid-direct-tools-opt-in) |
+| Tools | 45 | 59: the same 45 plus 14 [Hyperliquid-direct tools](#hyperliquid-direct-tools-opt-in) |
 | Hosts contacted | only `https://www.flowscan.xyz` | `www.flowscan.xyz` plus exactly `api.hyperliquid.xyz`, `rpc.hyperliquid.xyz`, `api-ui.hyperliquid.xyz` and `api.hyperunit.xyz` (HTTPS, and WSS to the two Hyperliquid WebSocket endpoints) |
 | Adds | | block and transaction lookups, the live block/tx feed, prices, candles, order books, recent trades, spot token directory, perp DEX list, validator APR/uptime, borrow/lend APYs, and the address page's portfolio chart, HyperEVM balance and Unit bridge operations |
-| Tool list size (JSON schemas the client loads) | about 59,700 characters | about 74,300 characters |
+| Tool list size (JSON schemas the client loads) | about 57,300 characters | about 71,100 characters |
 
 The tool list is loaded into the model's context, so direct mode costs roughly a quarter more context on every conversation. Enable it only if you need the extra panels.
 
@@ -125,7 +125,7 @@ To share it with a project, commit a `.mcp.json` at the project root with the sa
 }
 ```
 
-Cursor users have reported a cap of 40 MCP tools across all servers; strict mode has 44. If you hit it, see [Limiting the tool list](docs/clients.md#limiting-the-tool-list).
+Cursor users have reported a cap of 40 MCP tools across all servers; strict mode has 45. If you hit it, see [Limiting the tool list](docs/clients.md#limiting-the-tool-list).
 
 ### Codex
 
@@ -196,7 +196,7 @@ Clients that connect to a URL instead of starting a process (ChatGPT, the OpenAI
 
 ```sh
 npx -y github:joshavenue/flowscan_mcp --http     # MCP endpoint: http://127.0.0.1:8787/mcp
-curl http://127.0.0.1:8787/healthz                # {"ok":true,"mode":"strict","tools":44,...}
+curl http://127.0.0.1:8787/healthz                # {"ok":true,"mode":"strict","tools":45,...}
 ```
 
 `--port <n>` and `--host <addr>` (or `PORT`, `HOST`, `FLOWSCAN_MCP_TRANSPORT=http`) change the defaults. The server is stateless by default (`--stateful` keeps `Mcp-Session-Id` sessions) and also serves the legacy HTTP+SSE transport on `/sse` for older clients. It has no authentication: it binds `127.0.0.1` and accepts only local `Host` headers unless `FLOWSCAN_MCP_ALLOWED_HOSTS` names more, and refuses browser origins not listed in `FLOWSCAN_MCP_CORS`.
@@ -239,7 +239,7 @@ The server is most accurate when the model also has the tool-selection rules (wh
 
 ## Tools
 
-These 44 tools are available in both modes. All tools are read-only (annotated `readOnlyHint`). Required parameters are in **bold**. "fields/limit/offset" means the tool accepts the standard [output-shaping](#output-shaping) parameters; "fields" alone means it only accepts `fields`. Default page sizes are noted where a tool pages a list. Each tool's description names the Flowscan page it mirrors; the route is in the `source` field of every result.
+These 45 tools are available in both modes. All tools are read-only (annotated `readOnlyHint`). Required parameters are in **bold**. "fields/limit/offset" means the tool accepts the standard [output-shaping](#output-shaping) parameters; "fields" alone means it only accepts `fields`. Default page sizes are noted where a tool pages a list. Each tool's description names the Flowscan page it mirrors; the route is in the `source` field of every result.
 
 ### Start here
 
@@ -257,6 +257,14 @@ These 44 tools are available in both modes. All tools are read-only (annotated `
 | `flowscan_address_perp_positions` | One address's open perp positions across all markets (including HIP-3) from the latest snapshot, sorted by notional, with `totalNotional` and `totalPositions`. | **`address`**, `market`, `side`, fields/limit/offset (default 50) |
 
 `openInterest` in the perp snapshot (and OI in the HIP-3 tools) is Flowscan's two-sided figure: long notional + short notional. That is twice the one-sided OI some other interfaces show. In direct mode, `flowscan_prices` returns Hyperliquid's own figure, which is on the same two-sided basis (`openInterestUsdTwoSided`, directly comparable), and `openInterestUsdOneSided` (half). Always say which one you quote. The homepage "24h Revenue" card is served by the revenue tools below.
+
+### Terminal (`/terminal`)
+
+| Tool | Returns | Key params |
+| --- | --- | --- |
+| `flowscan_market_history` | The trading terminal's per-market history (`POST /terminal/api/market-history`, `shownOn` = `/terminal`). `kind: "funding"`: hourly funding rates (`fundingRate`, an hourly fraction; positive = longs pay shorts). `kind: "slippage"`: order-book slippage for a market buy and sell of `amount` and the half-spread, in bps from mid, about every 15 minutes. Rows newest first with `time`/`timeIso`. `summary` covers the whole range: count, `from`/`to`, latest values; funding: mean hourly rate, min/max, `annualizedMeanRate`/`annualizedMeanPct` (mean hourly x 24 x 365, simple) and `shareHoursPositive`; slippage: `latest` plus mean/median/max of buy slippage, sell slippage and half-spread. Works for HIP-3 markets; a bare symbol (`TSLA`) resolves to `xyz:TSLA` when unique, an ambiguous one (`SNDK`) is rejected with the prefixed candidates, an unknown one is a 404. | **`kind`** (`funding`, `slippage`), **`coin`** (case-insensitive), `range` (`1d` default, `7d`, `14d`), `amount` (slippage only: `10k`, `100k` default, `1m` USD), fields/limit/offset (default 100; 14 days is about 336 funding rows or 1,350 slippage rows) |
+
+The terminal's chart, order book and trades are the direct-mode tools `flowscan_candles`, `flowscan_order_book` and `flowscan_recent_trades`; its positions are the perp snapshot tools above.
 
 ### Revenue (`/revenue`)
 
@@ -458,7 +466,7 @@ Failures come back as an MCP tool error (`isError: true`) with this body:
 
 For the Hyperliquid-direct tools, `source` is the upstream host and `route` the URL plus request type, for example `"https://api.hyperliquid.xyz/info {type:candleSnapshot}"`. A 429 from Hyperliquid also has a `hint` with how long to wait; it is not retried. A block or transaction that does not exist is a 404 ("Block not found" / "Transaction not found").
 
-`status` is `null` for timeouts and network errors. `status` and `route` are both `null` for errors the server raises itself before calling Flowscan, such as an invalid date range, an unknown DEX name or an unknown validator. An unknown market in `flowscan_perp_positions` is a 404 whose message lists candidate symbols.
+`status` is `null` for timeouts and network errors. `status` and `route` are both `null` for errors the server raises itself before calling Flowscan, such as an invalid date range, an unknown DEX name or an unknown validator. An unknown market in `flowscan_perp_positions` or `flowscan_market_history` is a 404 whose message lists candidate symbols.
 
 Only transient failures are retried, up to twice with backoff: HTTP 429, HTTP 5xx, timeouts and network errors. HTTP 400/404 and the deterministic HTTP 500 that Flowscan's address route returns for a malformed query (body containing "Check your request body") are returned immediately.
 
@@ -491,7 +499,7 @@ These appear on flowscan.xyz but are not served by Flowscan's servers. The Flows
 - Borrow/lend supply and borrow APYs (`flowscan_borrow_lend_reserves`)
 - On the address page: the portfolio chart (`flowscan_address_portfolio`), the HyperEVM balance (`flowscan_address_evm_balance`) and Unit bridge operations (`flowscan_address_unit_operations`)
 
-Some prices are available in strict mode because Flowscan serves them: entry and liquidation prices in position data, tokenized-stock marks (`flowscan_spot_stocks`), HIP-4 outcome prices and candles (`flowscan_hip4_*`), weekend TradFi closes (`flowscan_weekend_prices`) and Binance last prices for RWA symbols (`flowscan_hip3_binance_comparison`). Because the HYPE price is not available in strict mode, priority gas is reported in HYPE, not USD.
+Some prices are available in strict mode because Flowscan serves them: entry and liquidation prices in position data, tokenized-stock marks (`flowscan_spot_stocks`), HIP-4 outcome prices and candles (`flowscan_hip4_*`), weekend TradFi closes (`flowscan_weekend_prices`) and Binance last prices for RWA symbols (`flowscan_hip3_binance_comparison`). Because the HYPE price is not available in strict mode, priority gas is reported in HYPE, not USD. Funding-rate history and order-book slippage/spread history are served in both modes by `flowscan_market_history`.
 
 ### Not covered in either mode
 
@@ -514,6 +522,7 @@ Data is as fresh as Flowscan's own backend, plus this server's cache:
 
 - Perp positioning snapshot (`flowscan_perp_*`, `flowscan_address_perp_positions`): refreshed by Flowscan every few minutes. The perp tools return `snapshotIso` and `snapshotAgeSeconds`.
 - Address tools: live account state as Flowscan serves it at request time.
+- Terminal history (`flowscan_market_history`): funding is one row per hour, slippage one row about every 15 minutes; the newest row is the latest sample (`summary.to`).
 - Revenue series: one row per UTC day, complete days by default (see [Dates and windows](#dates-and-windows)); `flowscan_revenue_summary` reports the partial current day separately.
 - HIP-3 daily series: `lastDayPartial` is true when the last date is today (UTC).
 - Builder revenue and dashboard: daily, ending yesterday (UTC). The dashboard routes only have data from mid-2026 on.

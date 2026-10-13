@@ -9,7 +9,7 @@ The server speaks two transports:
 
 Protocol-level checks (list tools, call tools, get the `flowscan_guide` prompt, read a resource, over stdio and HTTP) with the MCP Inspector CLI, the Python MCP SDK, the OpenAI Agents SDK, langchain-mcp-adapters and the Vercel AI SDK are in [scripts/clients/RESULTS.md](../scripts/clients/RESULTS.md) (`npm run clients`). The IDE and chat clients below were not run; their sections follow the vendor docs.
 
-Environment variables (for example `FLOWSCAN_HYPERLIQUID_DIRECT=1` for the 58-tool [direct mode](../README.md#two-modes)) go in the client's `env` block for stdio. Over HTTP they are set on the server process instead.
+Environment variables (for example `FLOWSCAN_HYPERLIQUID_DIRECT=1` for the 59-tool [direct mode](../README.md#two-modes)) go in the client's `env` block for stdio. Over HTTP they are set on the server process instead.
 
 Contents: [Support table](#support-table) · [Running over HTTP](#running-over-http) · [Guidance for non-Claude agents](#guidance-for-non-claude-agents) · [Anthropic](#anthropic-claude-desktop-and-claude-code) · [OpenAI](#openai) · [Cursor](#cursor) · [VS Code](#vs-code-github-copilot) · [Devin Desktop (Windsurf)](#devin-desktop-formerly-windsurf) · [Cline](#cline) · [Roo Code](#roo-code) · [Continue](#continue) · [Zed](#zed) · [JetBrains](#jetbrains-ai-assistant) · [Google](#google) · [xAI Grok](#xai-grok) · [Nous Research Hermes](#nous-research-hermes) · [Frameworks](#agent-frameworks) · [Unverified points](#what-could-not-be-verified)
 
@@ -57,7 +57,7 @@ Cloud clients (ChatGPT, the OpenAI Responses API, grok.com, the xAI API, Claude 
 npx -y github:joshavenue/flowscan_mcp --http
 # stderr: flowscan-mcp ready (streamable HTTP, stateless) at http://127.0.0.1:8787/mcp (legacy SSE: /sse, health: /healthz) ...
 curl http://127.0.0.1:8787/healthz
-# {"ok":true,"name":"flowscan-mcp","version":"0.1.0","mode":"strict","tools":44,"transport":"streamable-http","endpoint":"/mcp","stateful":false,"legacySse":"/sse"}
+# {"ok":true,"name":"flowscan-mcp","version":"0.1.0","mode":"strict","tools":45,"transport":"streamable-http","endpoint":"/mcp","stateful":false,"legacySse":"/sse"}
 ```
 
 From a clone, `npm run start:http` (or `node dist/index.js --http`) does the same.
@@ -133,7 +133,7 @@ Every client also receives the server's MCP `instructions` field on connect (a s
 
 ### Limiting the tool list
 
-Strict mode registers 44 tools, direct mode 58. For a client that caps the number of tools, or to save context, set `FLOWSCAN_TOOLS` in the server's environment to a comma-separated list of tool names (`*` wildcards allowed). `flowscan_coverage` is always kept. Example: `"FLOWSCAN_TOOLS": "flowscan_revenue_*,flowscan_builder*,flowscan_address_*"`.
+Strict mode registers 45 tools, direct mode 59. For a client that caps the number of tools, or to save context, set `FLOWSCAN_TOOLS` in the server's environment to a comma-separated list of tool names (`*` wildcards allowed). `flowscan_coverage` is always kept. Example: `"FLOWSCAN_TOOLS": "flowscan_revenue_*,flowscan_builder*,flowscan_address_*"`.
 
 ## Anthropic: Claude Desktop and Claude Code
 
@@ -301,7 +301,7 @@ Drop the `env` line for strict mode. Over HTTP:
 
 - Supports tools, prompts, resources, roots and elicitation, over stdio, SSE and Streamable HTTP. Config values can use `${env:NAME}`, `${userHome}` and `${workspaceFolder}`; stdio servers also accept `envFile`.
 - Cursor asks for approval before MCP tool calls by default.
-- Tool count: Cursor's forum reported that only the first 40 MCP tools across all servers reach the agent (threads from 2025). The current docs page states no number. Strict mode has 44 tools, so if your Cursor still applies a cap, use [`FLOWSCAN_TOOLS`](#limiting-the-tool-list) to pick the ones you need.
+- Tool count: Cursor's forum reported that only the first 40 MCP tools across all servers reach the agent (threads from 2025). The current docs page states no number. Strict mode has 45 tools, so if your Cursor still applies a cap, use [`FLOWSCAN_TOOLS`](#limiting-the-tool-list) to pick the ones you need.
 - Guidance: `AGENTS.md` at the project root, or `.cursor/rules/flowscan.mdc` (frontmatter `alwaysApply: true`). Plain `.md` files in `.cursor/rules` are ignored.
 
 Docs: <https://cursor.com/docs/context/mcp>, <https://cursor.com/docs/context/rules>, forum: <https://forum.cursor.com/t/tools-limited-to-40-total/67976>.

@@ -51,7 +51,8 @@ function perpRow(u: Rec, c: Rec | undefined, dex: string): Rec {
     premium: num(c?.premium),
     openInterestTwoSided: oi,
     openInterestUsdTwoSided: oi !== null && mark !== null ? Math.round(oi * mark) : null,
-    openInterestUsdOneSided: oi !== null && mark !== null ? Math.round((oi * mark) / 2) : null,
+    // Half of the rounded two-sided figure, so one-sided x 2 always matches the two-sided value shown (within $1).
+    openInterestUsdOneSided: oi !== null && mark !== null ? Math.round(Math.round(oi * mark) / 2) : null,
     dayNtlVlm: num(c?.dayNtlVlm) === null ? null : Math.round(num(c?.dayNtlVlm)!),
     maxLeverage: u.maxLeverage,
     ...(u.isDelisted ? { isDelisted: true } : {}),

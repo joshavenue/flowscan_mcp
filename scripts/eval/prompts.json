@@ -4233,5 +4233,73 @@
    "ordered": false,
    "numeric": true
   }
+ },
+ {
+  "id": "t01",
+  "category": "terminal",
+  "prompt": "What was the BTC funding rate over the last week? Give the average and annualized.",
+  "expect": {
+   "tools": [
+    "flowscan_market_history"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_market_history kind funding, coin BTC, range 7d. Quote summary.meanHourlyRate (hourly, as a fraction or %) and summary.annualizedMeanRate / annualizedMeanPct, stating the convention (mean hourly x 24 x 365, simple). State the range (summary.from/to) and cite Flowscan's /terminal page. Hand-averaging rows instead of quoting the summary is a minor issue; wrong annualization is wrong_number.",
+   "requireAll": [
+    "flowscan_market_history"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "t02",
+  "category": "terminal",
+  "prompt": "How much slippage would a $1m market buy of ETH have on Hyperliquid?",
+  "expect": {
+   "tools": [
+    "flowscan_market_history"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_market_history kind slippage, coin ETH, amount 1m. Quote summary.latest.buySlippageBps (with its timeIso) and the median (summary.buySlippageBps.median) over the range; bps measured from mid. Cite Flowscan's /terminal page. Must use amount 1m (amountUsd 1000000), not the 100k default.",
+   "requireAll": [
+    "flowscan_market_history"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "t03",
+  "category": "terminal",
+  "prompt": "Has TSLA funding on Hyperliquid been mostly positive over the past 14 days?",
+  "expect": {
+   "tools": [
+    "flowscan_market_history"
+   ],
+   "behaviour": "answer",
+   "notes": "flowscan_market_history kind funding, coin TSLA (resolves to xyz:TSLA; the answer should name the market), range 14d. Quote summary.shareHoursPositive (or positiveHours / count) and the mean rate; positive = longs pay shorts. State the range.",
+   "requireAll": [
+    "flowscan_market_history"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
+ },
+ {
+  "id": "t04",
+  "category": "terminal",
+  "prompt": "Compare the bid-ask spread on BTC vs ETH over the last day.",
+  "expect": {
+   "tools": [
+    "flowscan_market_history"
+   ],
+   "behaviour": "answer",
+   "notes": "Two flowscan_market_history kind slippage calls (BTC and ETH, range 1d); compare summary.halfSpreadBps (mean/median; the full spread is 2x the half-spread, and the answer must say which it quotes). Cite Flowscan's /terminal page.",
+   "requireAll": [
+    "flowscan_market_history"
+   ],
+   "ordered": false,
+   "numeric": true
+  }
  }
 ]

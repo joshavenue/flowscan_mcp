@@ -25,10 +25,10 @@ async function listTools(): Promise<{ names: string[]; schemaChars: number; inst
   return { names: tools.map((t) => t.name), schemaChars: tools.reduce((a, t) => a + JSON.stringify(t).length, 0), instructions };
 }
 
-test("strict mode registers exactly the 44 flowscan.xyz tools", async () => {
+test("strict mode registers exactly the 45 flowscan.xyz tools", async () => {
   delete process.env[DIRECT_ENV];
   const { names, schemaChars, instructions } = await listTools();
-  assert.equal(names.length, 44);
+  assert.equal(names.length, 45);
   for (const t of DIRECT_TOOLS) assert.ok(!names.includes(t), t);
   assert.ok(schemaChars < 60_000, `schema ${schemaChars}`);
   assert.match(instructions ?? "", /exclusively from flowscan\.xyz/);
@@ -37,7 +37,7 @@ test("strict mode registers exactly the 44 flowscan.xyz tools", async () => {
 test("direct mode adds the 14 Hyperliquid-direct tools", async () => {
   process.env[DIRECT_ENV] = "true";
   const { names, instructions } = await listTools();
-  assert.equal(names.length, 44 + DIRECT_TOOLS.length);
+  assert.equal(names.length, 45 + DIRECT_TOOLS.length);
   for (const t of DIRECT_TOOLS) assert.ok(names.includes(t), t);
   assert.match(instructions ?? "", /api\.hyperunit\.xyz/);
 });

@@ -382,7 +382,7 @@ const scenarios: Scenario[] = [
         const r = await c.call("flowscan_peers", { section: "nodes", country: code, limit: 200 });
         const nodes = (r.json?.data?.nodes ?? []) as any[];
         const wrong = nodes.filter((n) => n.geo?.cc !== code).map((n) => `${n.geo?.cc}/${n.geo?.country}`);
-        c.must(`country=${code} returns only nodes with that ISO code (no substring hits on country names)`, nodes.length > 0 && wrong.length === 0, `${wrong.length} of ${nodes.length} wrong: ${[...new Set(wrong)].join(", ")} (raw ${code} count ${cc(code)})`);
+        c.must(`country=${code} returns only nodes with that ISO code (no substring hits on country names)`, (nodes.length > 0 || cc(code) === 0) && wrong.length === 0, `${wrong.length} of ${nodes.length} wrong: ${[...new Set(wrong)].join(", ")} (raw ${code} count ${cc(code)})`);
       }
       const s = await c.call("flowscan_peers", {});
       c.must("sentries with operators in summary", (s.json?.data?.sentries ?? []).every((x: any) => "operator" in x) && s.json?.data?.sentries?.length > 0);
@@ -528,13 +528,64 @@ const scenarios: Scenario[] = [
     async run(c) {
       const tools = await c.h.listTools();
       c.must("all tools have descriptions", tools.every((t) => (t.description?.length ?? 0) > 50));
-      c.must("builder_lookup and builder_revenue registered", ["flowscan_builder_lookup", "flowscan_builder_revenue"].every((n) => tools.some((t) => t.name === n)));
+      c.must("45 tools in strict mode", tools.length === 45, tools.length);
+      c.must("builder_lookup, builder_revenue and market_history registered", ["flowscan_builder_lookup", "flowscan_builder_revenue", "flowscan_market_history"].every((n) => tools.some((t) => t.name === n)));
       const total = tools.reduce((a, t) => a + JSON.stringify(t).length, 0);
       c.should("total tool schema under 60k chars (context cost)", total < 60_000, `${tools.length} tools, ${total} chars`);
       const hip4: any = tools.find((t) => t.name === "flowscan_hip4_outcome")?.inputSchema;
       c.should("hip4_outcome derives yes/no asset ids from outcomeId (they are #<id>0/#<id>1)", !(hip4?.required ?? []).includes("yesAssetId"), hip4?.required);
       const dash: any = tools.find((t) => t.name === "flowscan_builder_dashboard")?.inputSchema;
       c.should("builder_dashboard accepts a builder id/name, not only a 0x address", !dash?.properties?.builder?.pattern, dash?.properties?.builder?.pattern);
+    },
+  },
+  {
+    id: 28,
+    name: "terminal: BTC funding last 7 days",
+    async run(c) {
+      const r = await c.call("flowscan_market_history", { kind: "funding", coin: "btc", range: "7d", limit: 200 });
+      const d = r.json;
+      const s = d?.summary;
+      const rows: any[] = d?.data ?? [];
+      c.must("ok, source = market-history route, shownOn = /terminal", !r.isError && d?.source === "https://www.flowscan.xyz/terminal/api/market-history" && d?.shownOn === "https://www.flowscan.xyz/terminal", r.text.slice(0, 200));
+      c.must("request is the terminal's fundingHistory body with startTime ~7d ago", d?.request?.type === "fundingHistory" && d?.request?.coin === "BTC" && Math.abs(Date.now() - 7 * DAY - d?.request?.startTime) < 5 * 60_000, d?.request);
+      c.must("~168 hourly rows, newest first, ISO twins", rows.length >= 160 && rows.length <= 170 && rows.every((x, i) => x.timeIso === new Date(x.time).toISOString() && (i === 0 || rows[i - 1].time - x.time > 3_000_000)), rows.length);
+      const rates = rows.map((x) => x.fundingRate);
+      const m = sum(rates) / rates.length;
+      c.must("summary: count, from/to ISO", s?.count === rows.length && s?.to === rows[0]?.timeIso && s?.from === rows.at(-1)?.timeIso && Date.parse(s?.to) - Date.parse(s?.from) > 6.9 * DAY, s && { count: s.count, from: s.from, to: s.to });
+      c.must("summary: latest, mean, min/max", s?.latestRate === rates[0] && rel(s?.meanHourlyRate, m) < 1e-4 && s?.minRate === Math.min(...rates) && s?.maxRate === Math.max(...rates), s);
+      c.must("summary: annualized = mean x 24 x 365, convention stated", rel(s?.annualizedMeanRate, m * 24 * 365) < 1e-4 && near(s?.annualizedMeanPct, m * 24 * 365 * 100, 0.001) && /24 x 365/.test(d?.note ?? ""), [s?.annualizedMeanRate, d?.note]);
+      c.must("summary: share of hours positive", near(s?.shareHoursPositive, rates.filter((x) => x > 0).length / rates.length, 1e-4), s?.shareHoursPositive);
+      // Ground truth: the same request body against the raw route (a new row may land in between).
+      const rawRows: any[] = await raw("/terminal/api/market-history", { method: "POST", body: d?.request });
+      const byT = new Map((Array.isArray(rawRows) ? rawRows : []).map((x) => [x.time, Number(x.fundingRate)]));
+      c.must("every row equals the raw route", Array.isArray(rawRows) && rawRows.length - rows.length >= 0 && rawRows.length - rows.length <= 1 && rows.every((x) => byT.get(x.time) === x.fundingRate), [rawRows?.length, rows.length]);
+      const bad = await c.call("flowscan_market_history", { kind: "funding", coin: "NOT_A_COIN_XYZ" });
+      c.must("unknown coin -> isError 404 with a hint, < 2000 ms", bad.isError && /"status":404/.test(bad.text) && /flowscan_perp_markets|Did you mean/.test(bad.text) && bad.ms < 2000, bad.text.slice(0, 200));
+    },
+  },
+  {
+    id: 29,
+    name: "slippage for 1m on ETH",
+    async run(c) {
+      const r = await c.call("flowscan_market_history", { kind: "slippage", coin: "ETH", amount: "1m" });
+      const d = r.json;
+      const s = d?.summary;
+      const rows: any[] = d?.data ?? [];
+      c.must("ok, request amount 1000000, ~15-min rows over 1d", !r.isError && d?.request?.type === "slippageHistory" && d?.request?.amount === 1_000_000 && d?.amountUsd === 1_000_000 && rows.length >= 80 && rows.length <= 100, [d?.request, rows.length]);
+      c.must("rows newest first with ISO twins", rows.every((x, i) => x.timeIso === new Date(x.time).toISOString() && (i === 0 || rows[i - 1].time > x.time)));
+      c.must("summary: count, from/to ISO, amountUsd", s?.count === rows.length && s?.to === rows[0]?.timeIso && s?.from === rows.at(-1)?.timeIso && s?.amountUsd === 1_000_000, s && { count: s.count, from: s.from, to: s.to });
+      c.must("summary.latest = newest row", s?.latest?.buySlippageBps === rows[0]?.buySlippageBps && s?.latest?.sellSlippageBps === rows[0]?.sellSlippageBps && s?.latest?.halfSpreadBps === rows[0]?.halfSpreadBps, s?.latest);
+      for (const k of ["buySlippageBps", "sellSlippageBps", "halfSpreadBps"]) {
+        const xs = rows.map((x) => x[k] as number).sort((a, b) => a - b);
+        const med = xs.length % 2 ? xs[xs.length >> 1] : (xs[xs.length / 2 - 1] + xs[xs.length / 2]) / 2;
+        c.must(`summary.${k}: mean/median/max`, near(s?.[k]?.mean, sum(xs) / xs.length, 1e-3) && near(s?.[k]?.median, med, 1e-3) && s?.[k]?.max === xs.at(-1), s?.[k]);
+      }
+      const rawRows: any[] = await raw("/terminal/api/market-history", { method: "POST", body: d?.request });
+      const byT = new Map((Array.isArray(rawRows) ? rawRows : []).map((x) => [x.timestamp, x]));
+      c.must("every row equals the raw route", Array.isArray(rawRows) && rawRows.length - rows.length >= 0 && rawRows.length - rows.length <= 1 && rows.every((x) => {
+        const y: any = byT.get(x.time);
+        return y && y.buySlippageBps === x.buySlippageBps && y.sellSlippageBps === x.sellSlippageBps && y.halfSpreadBps === x.halfSpreadBps && y.amountUsd === 1_000_000;
+      }), [rawRows?.length, rows.length]);
     },
   },
 
@@ -680,7 +731,7 @@ const scenarios: Scenario[] = [
     async run(c) {
       const tools = await c.h.listTools();
       const total = tools.reduce((a, t) => a + JSON.stringify(t).length, 0);
-      c.must("58 tools (44 + 14 direct)", tools.length === 58, tools.length);
+      c.must("59 tools (45 + 14 direct)", tools.length === 59, tools.length);
       c.info(`direct-mode tool schema: ${total} chars`);
       const cov = await c.call("flowscan_coverage", { topic: "block" });
       c.must("coverage serves /block in direct mode", cov.json?.mode === "hyperliquid-direct" && cov.json?.servedByThisServer === true, cov.json?.pages?.map((p: any) => p.path));
