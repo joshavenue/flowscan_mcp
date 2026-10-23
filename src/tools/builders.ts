@@ -44,6 +44,19 @@ function checkIntelRange(args: { startDate?: string; endDate?: string }): void {
   if (args.startDate && args.startDate > daysAgo(0)) throw new Error(`startDate ${args.startDate} is in the future.`);
 }
 
+/**
+ * Flowscan's Builder Intelligence reports are full exports; on 2026-10-23 the routes returned the
+ * same date_range whatever startDate/endDate said. Say so whenever the report's range differs.
+ */
+function intelRangeNote(args: { startDate?: string; endDate?: string }, d: Rec): Rec {
+  if (!args.startDate && !args.endDate) return {};
+  const range = ((d.metadata as Rec | undefined)?.date_range as Rec | undefined) ?? null;
+  if (range && range.start === args.startDate && range.end === args.endDate) return {};
+  return {
+    dateRangeNote: `Requested ${args.startDate ?? "..."}..${args.endDate ?? "..."}, but Flowscan returned its report for ${range ? `${range.start}..${range.end}` : "an unstated range"}; the dates were not applied. Quote the report's own range.`,
+  };
+}
+
 /** Inclusive list of YYYY-MM-DD dates. */
 const dateRange = (start: string, end: string): string[] => {
   const out: string[] = [];
@@ -242,7 +255,7 @@ export function registerBuilderTools(server: McpServer): void {
       description:
         "Resolve a builder name to its id/address. Names can be ambiguous (e.g. two 'fomo' builders); call this first, then pass the exact id/address to flowscan_builder_revenue or flowscan_builder_dashboard (as `address` or 'id:<id>'). If multiple strong matches exist, show them to the user. Matches id, name and address (case-insensitive); exact matches first, then substrings, by all-time revenue. Each match: id, name, category, address, revenue and volume USD for 1d/7d/30d/90d/all_time, total_users.",
       inputSchema: {
-        query: z.string().min(1).describe("Name, id or address (substring ok), e.g. 'fomo'."),
+        query: z.string().trim().min(1).describe("Name, id or address (substring ok), e.g. 'fomo'."),
         limit: z.number().int().min(1).max(100).optional().describe("Max matches returned (default 20)."),
       },
     },
@@ -521,7 +534,7 @@ export function registerBuilderTools(server: McpServer): void {
         const usersList = ((top.users as Rec[]) ?? []).slice(0, args.topUsersLimit ?? 20);
         out.topUsers = top.error
           ? { error: top.error }
-          : { window: q.window, note: "Addresses that paid this builder the most fees in the window (feesUsd) and their volume (volumeUsd) through it.", users: usersList.map((u) => ({ address: u.address, feesUsd: u.fees, volumeUsd: u.volume })), count: ((top.users as Rec[]) ?? []).length };
+          : { window: q.window, windowNote: "Flowscan's top-users route does not report the window's start and end dates.", note: "Addresses that paid this builder the most fees in the window (feesUsd) and their volume (volumeUsd) through it.", users: usersList.map((u) => ({ address: u.address, feesUsd: u.fees, volumeUsd: u.volume })), count: ((top.users as Rec[]) ?? []).length };
       }
       if (stats) out.stats = stats;
       if (daily) {
@@ -546,7 +559,10 @@ export function registerBuilderTools(server: McpServer): void {
         envelope(routes[0], pick(out, args.fields), {
           ...(routes.length > 1 ? { sources: routes.map((r) => `https://www.flowscan.xyz${r}`) } : {}),
           window: q.window,
-          windowNote: q.window === "all" ? "all time up to the latest Flowscan update" : `the last ${q.window} as Flowscan computes it (complete UTC days ending yesterday for stats/daily/assets)`,
+          windowNote:
+            q.window === "all"
+              ? "all time up to the latest Flowscan update"
+              : `the last ${q.window}: stats, daily and assets cover complete UTC days ending yesterday${top ? "; topUsers' exact dates are not reported by Flowscan" : ""}`,
           builder: address,
           ...(resolved ? { resolvedBuilder: resolved } : {}),
         }),
@@ -577,7 +593,7 @@ export function registerBuilderTools(server: McpServer): void {
       const { items, paging } = page(rows, args, 50);
       const out: Rec = { builders: items };
       if (c) out.categories = c.categories;
-      return result(envelope("/api/intelligence/builders", pick(out, args.fields), { paging }));
+      return result(envelope("/api/intelligence/builders", pick(out, args.fields), { paging, ...(c ? { sources: ["https://www.flowscan.xyz/api/intelligence/builders", "https://www.flowscan.xyz/api/intelligence/categories"] } : {}) }));
     },
   );
 
@@ -625,7 +641,7 @@ export function registerBuilderTools(server: McpServer): void {
         }
         out[s] = compactAddressLists(v);
       }
-      return result(envelope(route, pick(out, args.fields), { availableSections: INTEL_SECTIONS }));
+      return result(envelope(route, pick(out, args.fields), { availableSections: INTEL_SECTIONS, ...intelRangeNote(args, d) }));
     },
   );
 
@@ -656,7 +672,7 @@ export function registerBuilderTools(server: McpServer): void {
         out.metadata = m;
       }
       // cohort entries embed every member address (~1 MB); keep counts + a sample
-      return result(envelope(route, pick(compactAddressLists(out), args.fields)));
+      return result(envelope(route, pick(compactAddressLists(out), args.fields), intelRangeNote(args, d)));
     },
   );
 }

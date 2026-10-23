@@ -60,7 +60,7 @@ export function registerWeekendTools(server: McpServer): void {
         const sched = (((await get("/api/weekend/schedule")) as Rec).schedule as Rec[]) ?? [];
         out.schedule = sched.filter((x) => Number(x.sessionEndTs ?? x.sundayCloseTs ?? 0) >= since).slice(0, 12).map((x) => withIso(x));
       }
-      return result(envelope("/api/weekend/weeks", pick(out, args.fields), { paging }));
+      return result(envelope("/api/weekend/weeks", pick(out, args.fields), { paging, ...(args.includeSchedule ? { sources: ["https://www.flowscan.xyz/api/weekend/weeks", "https://www.flowscan.xyz/api/weekend/schedule"] } : {}) }));
     },
   );
 

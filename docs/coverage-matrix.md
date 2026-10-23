@@ -163,7 +163,7 @@ Compared with the server's previous coverage map (last verified 2026-10-02):
 | Market comparisons tab | `flowscan_hip3_markets` {symbol} | covered | covered |  |
 | Binance comparison tab | `flowscan_hip3_binance_comparison` | covered | covered |  |
 | Builders tab | `flowscan_hip3_builders` | covered | covered |  |
-| One DEX view | `flowscan_hip3_dex` | covered | covered |  |
+| One DEX view | `flowscan_hip3_dex` | covered | covered | Its per-market OI comes from Flowscan's HIP-3 stats dataset, which can lag the live snapshot (on 2026-10-23 it showed 0 for xyz:NVDA). |
 | DEX brand names (TradeXYZ, Kinetiq, Felix, HyENA, Ventuals, Entropy.io) | every `dex` parameter | partial | covered | Brand names are accepted since this change. |
 
 ### /weekend-trading
@@ -180,7 +180,7 @@ Compared with the server's previous coverage map (last verified 2026-10-02):
 
 | Feature | Tool and params | Before | After | Note |
 | --- | --- | --- | --- | --- |
-| Header: 24h volume, active/price/event counts | `flowscan_hip4_markets` (`paging.total` per filter, `volume24h`) | partial | covered |  |
+| Header: 24h volume, active/price/event counts | `flowscan_hip4_markets` (`totals.volume24h`, `totals.outcomes` per filter) | partial | covered |  |
 | Filters: Price / Events / Canonical, deployer | `flowscan_hip4_markets` {marketKind, deployer} | partial | covered |  |
 | Market cards (outcomes, implied probability, volume, 24h change) | `flowscan_hip4_markets` | covered | covered |  |
 | Question groups | `flowscan_hip4_markets` {section:"questions"} | covered | covered |  |
@@ -223,14 +223,14 @@ Compared with the server's previous coverage map (last verified 2026-10-02):
 | Volume share, ARR, totals, period snapshot | `flowscan_builder_dashboard` {section:"stats"} | covered | covered |  |
 | Daily revenue and users | `flowscan_builder_dashboard` {section:"daily"}, `flowscan_builder_revenue` | covered | covered |  |
 | Trade mix, top assets, markets table | `flowscan_builder_dashboard` {section:"assets"} | covered | covered |  |
-| Audience: top users by builder fees | `flowscan_builder_dashboard` {section:"topUsers"} | missing | covered |  |
+| Audience: top users by builder fees | `flowscan_builder_dashboard` {section:"topUsers"} | missing | covered | Flowscan does not report the exact start/end dates of this window. |
 | Audience: weekly cohort retention | `flowscan_builder_intelligence_detail` {sections:["weekly_retention_cohorts"]} | partial | partial | Only for the ~120 builders Builder Intelligence tracks. |
 
 ### /builder-intelligence
 
 | Feature | Tool and params | Before | After | Note |
 | --- | --- | --- | --- | --- |
-| Overview, Users and Categories tabs | `flowscan_builder_intelligence_list`, `_detail`, `_summary` | covered | covered |  |
+| Overview, Users and Categories tabs | `flowscan_builder_intelligence_list`, `_detail`, `_summary` | covered | covered | The routes ignored startDate/endDate on 2026-10-23 (full reports only); the tools say so in `dateRangeNote`. |
 
 ## Routes found in the site's JavaScript
 

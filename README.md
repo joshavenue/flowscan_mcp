@@ -55,7 +55,7 @@ The first start can take a minute while npm builds the server. Then ask your age
 | **Staking** | Total HYPE staked, validators, delegators |
 | **More** | Tokenized stocks, weekend trading, stablecoins, network nodes, search |
 
-Every result says which Flowscan page and date range the numbers come from.
+Every result names the Flowscan route it came from and when it was served; series and snapshots also carry their dates or snapshot time.
 
 ## Optional: live market data
 

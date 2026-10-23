@@ -109,12 +109,13 @@ export function registerHip4Tools(server: McpServer): void {
         const kind = r.marketType === "canonical" ? "canonical" : PRICE_TYPES.has(String(r.marketType)) ? "price" : "events";
         return kind === args.marketKind;
       };
-      const f = (rows: Rec[]) =>
+      const matchRows = (rows: Rec[]) =>
         rows
           .filter((r) => matches(outcomeText(r), args.search) && (!args.category || [r.category, r.subCategory, (r.question as Rec | null)?.category].some((c) => matches(c ?? "", args.category) && c)))
           .filter((r) => kindOk(r) && (!args.deployer || matches(r.deployerName ?? (r as Rec).deployer, args.deployer)))
-          .sort((a, b) => (a.outcomeId === undefined ? 0 : (sorter(b) - sorter(a) || volumeTotal(b) - volumeTotal(a)) * dir))
-          .map((r) => (r.outcomeId === undefined ? r : args.full ? compactOutcome(r, args.includeContexts) : slimOutcome(r)));
+          .sort((a, b) => (a.outcomeId === undefined ? 0 : (sorter(b) - sorter(a) || volumeTotal(b) - volumeTotal(a)) * dir));
+      const shape = (r: Rec) => (r.outcomeId === undefined ? r : args.full ? compactOutcome(r, args.includeContexts) : slimOutcome(r));
+      const f = (rows: Rec[]) => matchRows(rows).map(shape);
       if (section === "all") {
         const out: Rec = { generatedAt: data.generatedAt };
         const extra: Rec = {};
@@ -125,8 +126,19 @@ export function registerHip4Tools(server: McpServer): void {
         }
         return result(envelope("/api/hip-4", pick(out, args.fields), extra));
       }
-      const { items, paging } = page(f((data[key] as Rec[]) ?? []), args, 20);
-      return result(envelope("/api/hip-4", pick({ generatedAt: data.generatedAt, [key]: items }, args.fields), { paging, ...(section === "questions" ? {} : { sortedBy: `${sortKey} ${dir === 1 ? "desc" : "asc"}` }) }));
+      const matched = matchRows((data[key] as Rec[]) ?? []);
+      const { items: rawItems, paging } = page(matched, args, 20);
+      const items = rawItems.map(shape);
+      // Header figures (the page's 24h volume and counts) over every matched outcome, so nobody adds rows by hand.
+      const totals =
+        section === "questions"
+          ? undefined
+          : { outcomes: matched.length, volume24h: Math.round(matched.reduce((a, r) => a + volume24h(r), 0) * 100) / 100, totalVolume: Math.round(matched.reduce((a, r) => a + volumeTotal(r), 0) * 100) / 100, note: "over every outcome matching the filters (USD notional, YES + NO)" } as Rec;
+      if (totals && Number(totals.volume24h) > 0 && totals.volume24h === totals.totalVolume) {
+        // Seen on 2026-10-23: every outcome's 24h volume equalled its lifetime volume while the page header showed $0.
+        totals.volume24hWarning = "In Flowscan's data right now volume24h equals totalVolume for these outcomes, so it may be cumulative rather than 24h. Say so if you quote it.";
+      }
+      return result(envelope("/api/hip-4", pick({ generatedAt: data.generatedAt, ...(totals ? { totals } : {}), [key]: items }, args.fields), { paging, ...(section === "questions" ? {} : { sortedBy: `${sortKey} ${dir === 1 ? "desc" : "asc"}` }) }));
     },
   );
 
@@ -152,18 +164,29 @@ export function registerHip4Tools(server: McpServer): void {
       const asset = (v: string | undefined, side: 0 | 1) => {
         const x = String(v ?? `${args.outcomeId}${side}`).trim();
         const id = x.startsWith("#") ? x : `#${x}`;
-        if (!/^#\d+[01]$/.test(id)) throw new Error(`Asset id '${v}' is not a HIP-4 outcome side: expected '#<outcomeId>0' (YES) or '#<outcomeId>1' (NO).`);
+        // YES is always '#<outcomeId>0' and NO '#<outcomeId>1'; anything else would mislabel another market's candles.
+        if (id !== `#${args.outcomeId}${side}`) throw new Error(`${side === 0 ? "yesAssetId" : "noAssetId"} for outcome ${args.outcomeId} must be '#${args.outcomeId}${side}' (got '${v}'). Omit it to use the default.`);
         return id;
       };
       const data = (await get(route, { yesCoin: asset(args.yesAssetId, 0), noCoin: asset(args.noAssetId, 1), interval: args.interval ?? "1h", days: args.days ?? 7, mode: args.settled ? "settled" : undefined })) as Rec;
       const compact = (c: unknown) => (Array.isArray(c) ? (c as Rec[]).map((k) => [k.t, k.o, k.h, k.l, k.c, k.v, k.n]) : c);
       const settled = data.settledOutcome && typeof data.settledOutcome === "object" ? compactOutcome(data.settledOutcome as Rec) : data.settledOutcome;
+      const empty = (c: unknown) => !Array.isArray(c) || c.length === 0;
+      let known: boolean | null = null;
+      if (empty(data.yesCandles) && empty(data.noCandles) && !data.settledOutcome && !data.yesStats && !data.noStats) {
+        // The route answers any id with an empty 200; check the outcome lists so "no data" is not mistaken for a quiet market.
+        const list = (await get("/api/hip-4", { limit: 1000 }, { ttlMs: 60_000 })) as Rec;
+        const ids = new Set([...((list.activeOutcomes as Rec[]) ?? []), ...((list.settledOutcomes as Rec[]) ?? [])].map((o) => Number(o.outcomeId)));
+        known = ids.has(Number(args.outcomeId));
+      }
       const out = {
         ...data,
         candleColumns: ["openTime", "open", "high", "low", "close", "volume", "trades"],
         yesCandles: compact(data.yesCandles),
         noCandles: compact(data.noCandles),
         settledOutcome: settled,
+        ...(known === false ? { found: false, notFoundNote: `Outcome ${args.outcomeId} is not among the active outcomes or the latest 1000 settled ones, and Flowscan returned no data for it. Check the id with flowscan_hip4_markets.` } : {}),
+        ...(known === true ? { found: true, emptyNote: "The outcome exists but has no candles or trade stats in this window (settled outcomes usually have none; pass settled=true for the settlement record)." } : {}),
       };
       return result(envelope(route, pick(out, args.fields)));
     },

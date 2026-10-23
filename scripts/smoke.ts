@@ -490,7 +490,15 @@ const cases: Case[] = [
   { tool: "flowscan_hip4_labels", label: "only requested ids", args: { assets: ["#14730", "#14739"] }, check: (d) => assert(Object.keys(d.data.labels).every((k) => k === "#14730") && d.data.invalid?.[0] === "#14739", "labels not limited to the request") },
   { tool: "flowscan_wallet_labels", label: "schema error is JSON", args: { addresses: ["0x1234"] }, expectError: true, check: (d) => assert(d.source === "input validation" && d.route === null, "validation error not JSON") },
   { tool: "flowscan_order_flow", label: "boundary endTime", args: { market: "BTC", bars: 4, endTime: 1792720800000 }, check: (d) => assert(d.data.candles === 4 && d.data.toIso === "2026-10-23T02:00:00.000Z", "boundary bars") },
-  { tool: "flowscan_coverage", label: "partly served topic", args: { topic: "live prices" }, check: (d) => assert(d.servedByThisServer === "partly" || d.servedByThisServer === false, "live prices claimed as served") },
+  {
+    tool: "flowscan_coverage",
+    label: "live prices topic",
+    args: { topic: "live prices" },
+    check: (d) => assert(DIRECT ? d.servedByThisServer === true : d.servedByThisServer === "partly" || d.servedByThisServer === false, `live prices: servedByThisServer=${d.servedByThisServer} in ${DIRECT ? "direct" : "strict"} mode`),
+  },
+  { tool: "flowscan_hip3_daily", label: "unknown dex", args: { dex: "NOT_A_DEX" }, expectError: true },
+  { tool: "flowscan_revenue_deployer_fees", label: "unknown dex", args: { dex: "NOT_A_DEX", days: 3 }, expectError: true },
+  { tool: "flowscan_hip3_daily", label: "collateral metric with dex", args: { metric: "collateral_oi", dex: "XYZ" }, expectError: true },
   { tool: "flowscan_builder_dashboard", label: "top users", args: { builder: FOMO_SOCIAL, section: "topUsers", topUsersLimit: 5 }, check: (d) => assert(d.data.topUsers.users.length > 0, "top users") },
 ];
 

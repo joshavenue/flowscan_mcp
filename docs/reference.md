@@ -406,7 +406,7 @@ In direct mode `flowscan_coverage` reports `mode: "hyperliquid-direct"` and list
 
 ## DEX names
 
-Since October 2026 the `/hip-3` page shows brand names (TradeXYZ, Kinetiq, ...), its data routes still use the older display names (XYZ, KM, ...), and market symbols (`xyz:TSLA`), address data and deployer fees use the on-chain DEX prefix. Tools that take a `dex` (the HIP-3 tools, `flowscan_revenue_deployer_fees` and `flowscan_address_summary`) accept any of the three, case-insensitively. `flowscan_hip3_dex` and `flowscan_address_summary` reject an unknown name with an error that lists the valid ones; in the other tools an unknown name simply matches nothing.
+Since October 2026 the `/hip-3` page shows brand names (TradeXYZ, Kinetiq, ...), its data routes still use the older display names (XYZ, KM, ...), and market symbols (`xyz:TSLA`), address data and deployer fees use the on-chain DEX prefix. Tools that take a `dex` (the HIP-3 tools, `flowscan_revenue_deployer_fees` and `flowscan_address_summary`) accept any of the three, case-insensitively. An unknown name is an input error that lists the valid ones, in every tool that takes a `dex`.
 
 | Brand name (page) | Display name (routes) | On-chain prefix |
 | --- | --- | --- |

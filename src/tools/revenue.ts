@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { post } from "../client.js";
-import { dexPrefixes } from "../dex.js";
+import { dexPrefixes, KNOWN_DEX_HELP } from "../dex.js";
 import { defineTool } from "../register.js";
 import { DATE_YMD, envelope, envelopeRows, page, pick, result, shapeInput, tail, todayUtc } from "../shape.js";
 
@@ -111,6 +111,10 @@ export function registerRevenueTools(server: McpServer): void {
         // accept on-chain names ('xyz', 'mkts') and /hip-3 display names ('KM' -> km + mkts)
         const q = String(args.dex).trim().toLowerCase();
         dexKeys = dexPrefixes(q).length ? dexPrefixes(q) : [q];
+        const seen = new Set(rows.flatMap((x) => ((x.byDex as Rec[]) ?? []).map((d) => String(d.dex).toLowerCase())));
+        if (!dexPrefixes(q).length && !seen.has(q)) {
+          throw new Error(`Unknown DEX '${args.dex}'. Known: ${KNOWN_DEX_HELP}; deployer names in this range: ${[...seen].sort().join(", ") || "none"}.`);
+        }
         const keep = new Set(dexKeys);
         rows = rows.map((x) => {
           const byDex = ((x.byDex as Rec[]) ?? []).filter((d) => keep.has(String(d.dex).toLowerCase()));
