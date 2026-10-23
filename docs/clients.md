@@ -133,7 +133,7 @@ Every client also receives the server's MCP `instructions` field on connect (a s
 
 ### Limiting the tool list
 
-Strict mode registers 45 tools, direct mode 59. For a client that caps the number of tools, or to save context, set `FLOWSCAN_TOOLS` in the server's environment to a comma-separated list of tool names (`*` wildcards allowed). `flowscan_coverage` is always kept. Example: `"FLOWSCAN_TOOLS": "flowscan_revenue_*,flowscan_builder*,flowscan_address_*"`.
+Strict mode registers 54 tools, direct mode 68. For a client that caps the number of tools, or to save context, set `FLOWSCAN_TOOLS` in the server's environment to a comma-separated list of tool names (`*` wildcards allowed). `flowscan_coverage` is always kept. Example: `"FLOWSCAN_TOOLS": "flowscan_revenue_*,flowscan_builder*,flowscan_address_*"`.
 
 ## Anthropic: Claude Desktop and Claude Code
 
@@ -301,7 +301,7 @@ Drop the `env` line for strict mode. Over HTTP:
 
 - Supports tools, prompts, resources, roots and elicitation, over stdio, SSE and Streamable HTTP. Config values can use `${env:NAME}`, `${userHome}` and `${workspaceFolder}`; stdio servers also accept `envFile`.
 - Cursor asks for approval before MCP tool calls by default.
-- Tool count: Cursor's forum reported that only the first 40 MCP tools across all servers reach the agent (threads from 2025). The current docs page states no number. Strict mode has 45 tools, so if your Cursor still applies a cap, use [`FLOWSCAN_TOOLS`](#limiting-the-tool-list) to pick the ones you need.
+- Tool count: Cursor's forum reported that only the first 40 MCP tools across all servers reach the agent (threads from 2025). The current docs page states no number. Strict mode has 54 tools, so if your Cursor still applies a cap, use [`FLOWSCAN_TOOLS`](#limiting-the-tool-list) to pick the ones you need.
 - Guidance: `AGENTS.md` at the project root, or `.cursor/rules/flowscan.mdc` (frontmatter `alwaysApply: true`). Plain `.md` files in `.cursor/rules` are ignored.
 
 Docs: <https://cursor.com/docs/context/mcp>, <https://cursor.com/docs/context/rules>, forum: <https://forum.cursor.com/t/tools-limited-to-40-total/67976>.

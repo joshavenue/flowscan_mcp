@@ -22,8 +22,8 @@ Flowscan (www.flowscan.xyz) is a Hyperliquid explorer. It has nothing to do with
 
 `flowscan_coverage` returns `mode`:
 
-- `"strict"` (default, 45 tools, only www.flowscan.xyz). Not served: block and transaction lookups, the live block/tx feed, live prices (HYPE, BTC, ...), candles, order books, recent trades, validator APR/uptime, borrow/lend APYs, an address's portfolio chart, HyperEVM balance and Unit bridge operations. Say so plainly, point to the Flowscan page (`https://www.flowscan.xyz/block/<height>`, `/tx/<hash>`, `/address/<address>`), and mention that the operator can set `FLOWSCAN_HYPERLIQUID_DIRECT=1`. When an answer needs the HYPE price, report the HYPE amount and say the price is not available in this mode. Funding-rate and slippage/spread history (the `/terminal` page) ARE served in both modes by `flowscan_market_history`.
-- `"hyperliquid-direct"` (59 tools; opt-in with `FLOWSCAN_HYPERLIQUID_DIRECT=1`). Adds `flowscan_block`, `flowscan_transaction`, `flowscan_live_feed`, `flowscan_prices`, `flowscan_candles`, `flowscan_order_book`, `flowscan_recent_trades`, `flowscan_spot_tokens`, `flowscan_validator_summaries`, `flowscan_address_portfolio`, `flowscan_address_evm_balance`, `flowscan_address_unit_operations` and others. These results have `mode: "hyperliquid-direct"`, `source` = the Hyperliquid URL called and `shownOn` = the Flowscan page; cite `shownOn`. Quote `fetchedAtIso` as the snapshot time. On a 429, read `hint`, wait, and do not retry in a loop. There is no generic Hyperliquid API tool; account history always comes from the `flowscan_address_*` tools.
+- `"strict"` (default, 54 tools, only www.flowscan.xyz). Not served: block and transaction lookups, the live block/tx feed, live prices (HYPE, BTC, ...), candles, order books, recent trades, validator APR/uptime, borrow/lend APYs, an address's portfolio chart, HyperEVM balance and Unit bridge operations. Say so plainly, point to the Flowscan page (`https://www.flowscan.xyz/block/<height>`, `/tx/<hash>`, `/address/<address>`), and mention that the operator can set `FLOWSCAN_HYPERLIQUID_DIRECT=1`. When an answer needs the HYPE price, report the HYPE amount and say the price is not available in this mode. Funding, open-interest and slippage/spread history, positioning, position changes, liquidations, order flow and TWAPs (the `/terminal` page) ARE served in both modes.
+- `"hyperliquid-direct"` (68 tools; opt-in with `FLOWSCAN_HYPERLIQUID_DIRECT=1`). Adds `flowscan_block`, `flowscan_transaction`, `flowscan_live_feed`, `flowscan_prices`, `flowscan_candles`, `flowscan_order_book`, `flowscan_recent_trades`, `flowscan_spot_tokens`, `flowscan_validator_summaries`, `flowscan_address_portfolio`, `flowscan_address_evm_balance`, `flowscan_address_unit_operations` and others. These results have `mode: "hyperliquid-direct"`, `source` = the Hyperliquid URL called and `shownOn` = the Flowscan page; cite `shownOn`. Quote `fetchedAtIso` as the snapshot time. On a 429, read `hint`, wait, and do not retry in a loop. There is no generic Hyperliquid API tool; account history always comes from the `flowscan_address_*` tools.
 
 If tools like `flowscan_block` or `flowscan_prices` are in your tool list, you are in direct mode.
 
@@ -59,12 +59,20 @@ Display name and on-chain prefix: XYZ=`xyz`, FLX=`flx`, Hyena=`hyna`, KM=`mkts` 
 | HIP-3 deployer fees | `flowscan_revenue_deployer_fees` with `days: 30`, or `dex` for one DEX. |
 | An address's positions / account | `flowscan_address_summary` (`include: ["perpState"]`, `["pnlSummary"]`, `["role"]`); all markets from the snapshot: `flowscan_address_perp_positions`. |
 | Trades, orders, funding, deposits | `flowscan_address_fills`, `flowscan_address_orders` (`kind`), `flowscan_address_ledger` (`kind: "funding"` or `"ledger"`). |
+| Win rate, closed trades of an address | `flowscan_address_completed_trades`; quote `summary`. |
 | Staking of an address | `flowscan_address_staking`. Vaults and sub-accounts: `flowscan_address_vaults_subaccounts`. |
-| Biggest longs or shorts in a market | `flowscan_perp_positions` with `market`, `side`, `limit`. Market totals: `marketSummary`, not `filteredSideSummary`. |
+| What is this address / hash / symbol / name? | `flowscan_search` with `query`; it names the next tool. Labels: `flowscan_wallet_labels`. |
+| Biggest longs or shorts in a market | `flowscan_perp_positions` with `market`, `side`, `limit` (`traderFilter: "leaderboard"` = top 10k accounts, the site's default). Market totals: `marketSummary`, not `filteredSideSummary`. |
+| Who opened or closed positions recently | `flowscan_position_changes` with `market`, `window` (`prev`, `1h`, `4h`, `24h`, `7d`); quote `summary`. |
+| Leverage/size distribution, liquidation levels | `flowscan_perp_market_detail` with `market` (`liquidationTotals`). |
+| Liquidations | `flowscan_liquidations` (recent events; `view: "history"` per minute for one market, about 2-3 days kept). |
+| Buy/sell volume, delta, opened vs closed | `flowscan_order_flow` with `market`, `interval`, `bars` (`kind: "flow"`). |
+| Active TWAPs | `flowscan_twaps` with `market`. |
 | Open interest, long/short ratio | `flowscan_perp_markets` with `market`. Flowscan's `openInterest` is two-sided (long + short); say which basis you quote. |
+| Open interest over the last month | `flowscan_market_history` with `kind: "openInterest"`, `range: "30d"`; quote `summary.changePct`. |
 | BTC funding rate over the last week | `flowscan_market_history` with `kind: "funding"`, `coin: "BTC"`, `range: "7d"`. Quote `summary.meanHourlyRate` (hourly fraction) and `summary.annualizedMeanPct`, stating the convention: mean hourly x 24 x 365, simple. Give `summary.from`/`to`. |
 | Slippage for a $1m ETH market buy | `flowscan_market_history` with `kind: "slippage"`, `coin: "ETH"`, `amount: "1m"`. Quote `summary.latest.buySlippageBps` (with its `timeIso`) and `summary.buySlippageBps.median`; bps from mid, including the half-spread. |
-| Top builders | `flowscan_builders_leaderboard` (`metric`, `window`, `limit`). Daily across builders: `flowscan_builders_daily_revenue`. |
+| Top builders | `flowscan_builders_leaderboard` (`metric`, `window`, `limit`; `rankBy: "change"` for weekly movers). Daily across builders: `flowscan_builders_daily_revenue`. |
 | One builder's revenue / volume | `flowscan_builder_lookup`, then `flowscan_builder_revenue` or `flowscan_builder_dashboard`. |
 | Builder deep dive | `flowscan_builder_intelligence_detail` with `builderId` and only the `sections` you need. |
 | HYPE staked, validators | `flowscan_staking_overview`; delegators of one validator: `flowscan_validator_stakers`. |
@@ -95,7 +103,7 @@ Results are compact JSON capped at about 40,000 characters.
 ## Not served
 
 - Strict mode: everything listed under "Modes" above.
-- Either mode: Flowscan's own address labels, continuous live streams (WebSocket tools return snapshots), and testnet.
+- Either mode: the /terminal L4 order book (orders by address, streamed from a third-party host), saved addresses in the search box (browser-only), continuous live streams (WebSocket tools return snapshots), and testnet. Flowscan's address labels ARE served (`flowscan_wallet_labels`).
 
 Say what is not served and where the user can see it on www.flowscan.xyz. Do not invent values.
 

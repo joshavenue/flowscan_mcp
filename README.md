@@ -8,6 +8,7 @@ Flowscan is a real-time explorer for the Hyperliquid blockchain. (It has nothing
 - *"Who holds the biggest BTC longs right now?"*
 - *"Which builder code made the most revenue this week?"*
 - *"What positions does 0x… have open?"*
+- *"How much was liquidated on ETH today, and who just opened big shorts?"*
 
 **Free, no API key, read-only, Hyperliquid mainnet.**
 
@@ -40,19 +41,19 @@ The first start can take a minute while npm builds the server. Then ask your age
 
 ## What it covers
 
-45 tools, grouped by the Flowscan page they mirror:
+54 tools, grouped by the Flowscan page they mirror:
 
 | Area | What you can ask about |
 | --- | --- |
 | **Revenue** | Daily protocol fees, HIP-3 deployer fees, priority gas, 1/7/30-day totals |
-| **Perps** | Open interest, long/short ratios, the largest positions in any market |
-| **Terminal** | Funding-rate history and order-book slippage/spread history per market |
-| **Addresses** | Positions, PnL, trades, orders, funding, deposits, staking, vaults |
-| **Builders** | Builder-code leaderboards, revenue over any date range, user stats |
+| **Perps** | Open interest, long/short ratios, the largest positions in any market, who opened or closed what, liquidation levels |
+| **Terminal** | Funding, open-interest and slippage history, liquidations, buy/sell order flow, active TWAPs |
+| **Addresses** | Positions, PnL, trades, closed trades and win rate, orders, funding, deposits, staking, vaults, Flowscan's name for an address |
+| **Builders** | Builder-code leaderboards and weekly movers, revenue over any date range, user stats, top users |
 | **HIP-3** | Perp DEX market share, volume, markets, comparison with Binance |
 | **HIP-4** | Outcome (prediction) markets, prices and candles |
 | **Staking** | Total HYPE staked, validators, delegators |
-| **More** | Tokenized stocks, weekend trading, stablecoins, network nodes |
+| **More** | Tokenized stocks, weekend trading, stablecoins, network nodes, search |
 
 Every result says which Flowscan page and date range the numbers come from.
 
@@ -64,7 +65,7 @@ Some Flowscan panels (live prices, candles, order books, blocks and transactions
 "env": { "FLOWSCAN_HYPERLIQUID_DIRECT": "1" }
 ```
 
-This adds 14 tools (59 in total). By default the server only talks to `www.flowscan.xyz`. With this setting it also calls Hyperliquid's public API.
+This adds 14 tools (68 in total). By default the server only talks to `www.flowscan.xyz`. With this setting it also calls Hyperliquid's public API.
 
 ## Good to know
 
@@ -76,6 +77,7 @@ This adds 14 tools (59 in total). By default the server only talks to `www.flows
 ## Documentation
 
 - [Full reference](docs/reference.md): every tool and parameter, output format, errors and settings
+- [Coverage matrix](docs/coverage-matrix.md): every Flowscan feature, the tool that serves it, and what is not served
 - [Client setup](docs/clients.md): step-by-step for 20+ MCP clients, HTTP and Docker
 - [Evaluation](docs/eval-2026-10-02.md): how the tools were tested with 220 real questions
 
