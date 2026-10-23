@@ -107,4 +107,6 @@ The data is live, so the absolute numbers in `prompts.json` notes (e.g. FOMO 45d
 - `results/full/REPORT.md`: the first full run (2026-10-02, 220 prompts): 197 PASS (89.5%), 20 PARTIAL, 3 FAIL, with a hand-written analysis of every non-PASS record (`results/full/analysis.md`). Every one of the 362 outbound requests went to www.flowscan.xyz.
 - `../../docs/eval-2026-10-02.md`: a copy of that report, including the failure analysis and the prioritized fixes. The fixes that followed were the lower result cap, server-side totals, `_fieldsNotFound` reporting, ISO timestamps, dated HIP-3 rows, spot-stock tickers in the tool description, and skill rules on arithmetic and adversarial requests.
 
+- `../../docs/eval-2026-10-23.md`: run `full-2026-10-23` (242 strict prompts incl. 18 for the tools added that day): 233 PASS (96.3%), 9 PARTIAL, 0 FAIL, $16.32.
+
 To compare a later run with this baseline, use a new `--run-id` and keep `results/full/` unchanged.

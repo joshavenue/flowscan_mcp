@@ -79,7 +79,8 @@ This adds 14 tools (68 in total). By default the server only talks to `www.flows
 - [Full reference](docs/reference.md): every tool and parameter, output format, errors and settings
 - [Coverage matrix](docs/coverage-matrix.md): every Flowscan feature, the tool that serves it, and what is not served
 - [Client setup](docs/clients.md): step-by-step for 20+ MCP clients, HTTP and Docker
-- [Evaluation](docs/eval-2026-10-02.md): how the tools were tested with 220 real questions
+- [Evaluation](docs/eval-2026-10-23.md): 242 real questions answered by a model using only these tools (96% pass); [first run](docs/eval-2026-10-02.md)
+- Independent retests by Codex: [round 1](docs/codex-retest-2026-10-23.md), [round 2](docs/codex-retest-2026-10-23-round2.md), [round 3](docs/codex-retest-2026-10-23-round3.md)
 
 ## Development
 

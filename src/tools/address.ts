@@ -438,7 +438,8 @@ export function registerAddressTools(server: McpServer): void {
         })
         .sort((a, b) => Number(b.amountHype ?? 0) - Number(a.amountHype ?? 0));
       const totalDelegatedHype = dl.reduce((a, d) => a + (Number(d.amount) || 0), 0);
-      return result(envelope(ROUTE, pick({ totalDelegatedHype, validatorCount: enriched.length, delegations: enriched, history }, args.fields)));
+      const historyRows = Array.isArray(history) ? (history as Rec[]).map((h) => withIso(h, "time", "timeIso")) : history;
+      return result(envelope(ROUTE, pick({ totalDelegatedHype, validatorCount: enriched.length, delegations: enriched, history: historyRows }, args.fields)));
     },
   );
 
