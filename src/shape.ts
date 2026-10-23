@@ -213,16 +213,22 @@ export function errorResult(err: unknown) {
   const payload = {
     error: e?.message ?? String(err),
     status: e?.status ?? null,
-    route: e?.route ?? null,
-    source: e?.source ?? "www.flowscan.xyz",
+    route: e?.source === "input validation" ? null : (e?.route ?? null),
+    // A plain Error (no route) comes from the tool's own argument checks, before any request.
+    source: e?.source ?? (e?.route ? "www.flowscan.xyz" : "input validation"),
     ...(e?.hint ? { hint: e.hint } : {}),
   };
   return { isError: true as const, content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
 }
 
-/** Standard envelope so every tool result states its provenance. */
+/**
+ * Standard envelope so every tool result states its provenance. servedAtIso is when this
+ * server built the result; Flowscan data may come from the server's cache (20 s by default,
+ * 5 min for large slow-changing payloads), and its own time fields (snapshotIso, dates, ...)
+ * say how old the data itself is.
+ */
 export function envelope(route: string, data: unknown, extra: Record<string, unknown> = {}) {
-  return { source: `https://www.flowscan.xyz${route}`, network: "mainnet", ...extra, data };
+  return { source: `https://www.flowscan.xyz${route}`, network: "mainnet", servedAtIso: new Date().toISOString(), ...extra, data };
 }
 
 /**

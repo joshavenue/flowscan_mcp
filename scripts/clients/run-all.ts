@@ -6,7 +6,7 @@
  * Usage: npm run build && npm run clients
  *        npm run clients -- --only python-sdk,vercel-ai-sdk   # subset
  *        npm run clients -- --no-write                         # do not rewrite RESULTS.md
- *        FLOWSCAN_HYPERLIQUID_DIRECT=1 npm run clients        # direct mode (59 tools)
+ *        FLOWSCAN_HYPERLIQUID_DIRECT=1 npm run clients        # direct mode (68 tools)
  *
  * Needs network (npm/PyPI installs and www.flowscan.xyz), python3 (uv optional) and npx.
  * No model API keys: these are protocol-level checks. Exits 1 if any client fails.

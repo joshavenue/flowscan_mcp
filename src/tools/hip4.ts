@@ -59,6 +59,9 @@ function slimOutcome(o: Rec): Rec {
   return row;
 }
 
+/** marketType values the /hip-4 page's "Price" filter shows (everything else but canonical is "Events"). */
+const PRICE_TYPES = new Set(["priceBinary", "binaryPrice", "priceTouch", "scalarPrice", "priceBucket"]);
+
 const SORTERS: Record<string, (o: Rec) => number> = {
   volume24h,
   totalVolume: volumeTotal,
@@ -78,11 +81,13 @@ export function registerHip4Tools(server: McpServer): void {
     {
       title: "HIP-4 prediction markets (questions, active & settled outcomes)",
       description:
-        "The /hip-4 page: HIP-4 prediction markets. section='active' (default): slim rows (outcomeId, name, marketType, asset ids, underlying/target/expiry, yesMark/noMark = implied probability, yesChange24h, volume24h, totalVolume, deployer, question) sorted by sortBy (default volume24h desc). 'settled': resolved outcomes with settleFraction and trade stats. 'questions': question groups. 'all': all three. full=true for descriptions. Candles: flowscan_hip4_outcome.",
+        "The /hip-4 page: HIP-4 prediction markets (filter like the page with marketKind price/events/canonical and deployer). section='active' (default): slim rows (outcomeId, name, marketType, asset ids, underlying/target/expiry, yesMark/noMark = implied probability, yesChange24h, volume24h, totalVolume, deployer, question) sorted by sortBy (default volume24h desc). 'settled': resolved outcomes with settleFraction and trade stats. 'questions': question groups. 'all': all three. full=true for descriptions. Candles: flowscan_hip4_outcome.",
       inputSchema: {
         section: z.enum(["active", "settled", "questions", "all"]).optional().describe("Default active."),
         search: z.string().optional().describe("Substring over name, description, category, underlying, type, deployer, question (e.g. 'Premier League')."),
         category: z.string().optional().describe("Category substring (e.g. 'NFL')."),
+        marketKind: z.enum(["price", "events", "canonical"]).optional().describe("The page's top filter: price (crypto price markets: above/touch/auto-settle/scalar/bucket), events (sports, politics, rates, other questions) or canonical (validator-voted)."),
+        deployer: z.string().optional().describe("Deployer name substring (e.g. 'Outcomexyz', 'Skew')."),
         settledLimit: z.number().int().min(1).max(1000).optional().describe("Settled outcomes to fetch (default 100)."),
         sortBy: z.enum(["volume24h", "totalVolume", "yesMark", "change24h"]).optional().describe("Default volume24h."),
         order: z.enum(["asc", "desc"]).optional().describe("Default desc."),
@@ -92,17 +97,25 @@ export function registerHip4Tools(server: McpServer): void {
       },
     },
     async (args) => {
-      const data = (await get("/api/hip-4", { limit: args.settledLimit ?? 100 }, { ttlMs: 60_000 })) as Rec;
       const section = args.section ?? "active";
+      if (args.marketKind && section === "questions") throw new Error("marketKind filters outcomes, not question groups. Use section 'active' or 'settled' (or 'all') with marketKind.");
+      const data = (await get("/api/hip-4", { limit: args.settledLimit ?? 100 }, { ttlMs: 60_000 })) as Rec;
       const sortKey = args.sortBy ?? "volume24h";
       const sorter = SORTERS[sortKey];
       const dir = args.order === "asc" ? -1 : 1;
       const key = { active: "activeOutcomes", settled: "settledOutcomes", questions: "questions", all: "" }[section as "active" | "settled" | "questions" | "all"];
-      const f = (rows: Rec[]) =>
+      const kindOk = (r: Rec) => {
+        if (!args.marketKind || r.outcomeId === undefined) return true;
+        const kind = r.marketType === "canonical" ? "canonical" : PRICE_TYPES.has(String(r.marketType)) ? "price" : "events";
+        return kind === args.marketKind;
+      };
+      const matchRows = (rows: Rec[]) =>
         rows
           .filter((r) => matches(outcomeText(r), args.search) && (!args.category || [r.category, r.subCategory, (r.question as Rec | null)?.category].some((c) => matches(c ?? "", args.category) && c)))
-          .sort((a, b) => (a.outcomeId === undefined ? 0 : (sorter(b) - sorter(a) || volumeTotal(b) - volumeTotal(a)) * dir))
-          .map((r) => (r.outcomeId === undefined ? r : args.full ? compactOutcome(r, args.includeContexts) : slimOutcome(r)));
+          .filter((r) => kindOk(r) && (!args.deployer || matches(r.deployerName ?? (r as Rec).deployer, args.deployer)))
+          .sort((a, b) => (a.outcomeId === undefined ? 0 : (sorter(b) - sorter(a) || volumeTotal(b) - volumeTotal(a)) * dir));
+      const shape = (r: Rec) => (r.outcomeId === undefined ? r : args.full ? compactOutcome(r, args.includeContexts) : slimOutcome(r));
+      const f = (rows: Rec[]) => matchRows(rows).map(shape);
       if (section === "all") {
         const out: Rec = { generatedAt: data.generatedAt };
         const extra: Rec = {};
@@ -113,8 +126,19 @@ export function registerHip4Tools(server: McpServer): void {
         }
         return result(envelope("/api/hip-4", pick(out, args.fields), extra));
       }
-      const { items, paging } = page(f((data[key] as Rec[]) ?? []), args, 20);
-      return result(envelope("/api/hip-4", pick({ generatedAt: data.generatedAt, [key]: items }, args.fields), { paging, ...(section === "questions" ? {} : { sortedBy: `${sortKey} ${dir === 1 ? "desc" : "asc"}` }) }));
+      const matched = matchRows((data[key] as Rec[]) ?? []);
+      const { items: rawItems, paging } = page(matched, args, 20);
+      const items = rawItems.map(shape);
+      // Header figures (the page's 24h volume and counts) over every matched outcome, so nobody adds rows by hand.
+      const totals =
+        section === "questions"
+          ? undefined
+          : { outcomes: matched.length, volume24h: Math.round(matched.reduce((a, r) => a + volume24h(r), 0) * 100) / 100, totalVolume: Math.round(matched.reduce((a, r) => a + volumeTotal(r), 0) * 100) / 100, note: "over every outcome matching the filters (USD notional, YES + NO)" } as Rec;
+      if (totals && Number(totals.volume24h) > 0 && totals.volume24h === totals.totalVolume) {
+        // Seen on 2026-10-23: every outcome's 24h volume equalled its lifetime volume while the page header showed $0.
+        totals.volume24hWarning = "In Flowscan's data right now volume24h equals totalVolume for these outcomes, so it may be cumulative rather than 24h. Say so if you quote it.";
+      }
+      return result(envelope("/api/hip-4", pick({ generatedAt: data.generatedAt, ...(totals ? { totals } : {}), [key]: items }, args.fields), { paging, ...(section === "questions" ? {} : { sortedBy: `${sortKey} ${dir === 1 ? "desc" : "asc"}` }) }));
     },
   );
 
@@ -126,7 +150,7 @@ export function registerHip4Tools(server: McpServer): void {
       description:
         "HIP-4 page outcome drill-down: candles for the YES and NO assets of one outcome over the last N days (compact rows [openTime ms, open, high, low, close, volume, trades]), plus per-side trade stats and, for settled outcomes (settled=true), the settled outcome record. Settled outcomes typically have no candles. Only outcomeId is required (asset ids default to '#<outcomeId>0' YES / '#<outcomeId>1' NO). Get outcomeId from flowscan_hip4_markets.",
       inputSchema: {
-        outcomeId: z.number().int().describe("Outcome id from flowscan_hip4_markets."),
+        outcomeId: z.number().int().min(0).describe("Outcome id from flowscan_hip4_markets."),
         yesAssetId: z.string().optional().describe("Default '#<outcomeId>0' (e.g. '#14730'); a missing '#' is added."),
         noAssetId: z.string().optional().describe("Default '#<outcomeId>1' (e.g. '#14731'); a missing '#' is added."),
         interval: z.enum(["1m", "5m", "15m", "1h", "4h", "1d"]).optional().describe("Candle interval (default '1h', as the site uses)."),
@@ -139,19 +163,32 @@ export function registerHip4Tools(server: McpServer): void {
       const route = `/api/hip-4/${encodeURIComponent(String(args.outcomeId))}`;
       const asset = (v: string | undefined, side: 0 | 1) => {
         const x = String(v ?? `${args.outcomeId}${side}`).trim();
-        return x.startsWith("#") ? x : `#${x}`;
+        const id = x.startsWith("#") ? x : `#${x}`;
+        // YES is always '#<outcomeId>0' and NO '#<outcomeId>1'; anything else would mislabel another market's candles.
+        if (id !== `#${args.outcomeId}${side}`) throw new Error(`${side === 0 ? "yesAssetId" : "noAssetId"} for outcome ${args.outcomeId} must be '#${args.outcomeId}${side}' (got '${v}'). Omit it to use the default.`);
+        return id;
       };
       const data = (await get(route, { yesCoin: asset(args.yesAssetId, 0), noCoin: asset(args.noAssetId, 1), interval: args.interval ?? "1h", days: args.days ?? 7, mode: args.settled ? "settled" : undefined })) as Rec;
       const compact = (c: unknown) => (Array.isArray(c) ? (c as Rec[]).map((k) => [k.t, k.o, k.h, k.l, k.c, k.v, k.n]) : c);
       const settled = data.settledOutcome && typeof data.settledOutcome === "object" ? compactOutcome(data.settledOutcome as Rec) : data.settledOutcome;
+      const empty = (c: unknown) => !Array.isArray(c) || c.length === 0;
+      let known: boolean | null = null;
+      if (empty(data.yesCandles) && empty(data.noCandles) && !data.settledOutcome && !data.yesStats && !data.noStats) {
+        // The route answers any id with an empty 200; check the outcome lists so "no data" is not mistaken for a quiet market.
+        const list = (await get("/api/hip-4", { limit: 1000 }, { ttlMs: 60_000 })) as Rec;
+        const ids = new Set([...((list.activeOutcomes as Rec[]) ?? []), ...((list.settledOutcomes as Rec[]) ?? [])].map((o) => Number(o.outcomeId)));
+        known = ids.has(Number(args.outcomeId));
+      }
       const out = {
         ...data,
         candleColumns: ["openTime", "open", "high", "low", "close", "volume", "trades"],
         yesCandles: compact(data.yesCandles),
         noCandles: compact(data.noCandles),
         settledOutcome: settled,
+        ...(known === false ? { found: false, notFoundNote: `Outcome ${args.outcomeId} is not among the active outcomes or the latest 1000 settled ones, and Flowscan returned no data for it. Check the id with flowscan_hip4_markets.` } : {}),
+        ...(known === true ? { found: true, emptyNote: "The outcome exists but has no candles or trade stats in this window (settled outcomes usually have none; pass settled=true for the settlement record)." } : {}),
       };
-      return result(envelope(route, pick(out, args.fields)));
+      return result(envelope(route, pick(out, args.fields), known === null ? {} : { sources: [`https://www.flowscan.xyz${route}`, "https://www.flowscan.xyz/api/hip-4"] }));
     },
   );
 
@@ -161,11 +198,19 @@ export function registerHip4Tools(server: McpServer): void {
     {
       title: "HIP-4 asset id -> human label",
       description: "Resolve HIP-4 outcome asset ids like '#14730' (YES) / '#14731' (NO) to readable labels such as 'Arsenal · Yes', as the address page does for HIP-4 spot balances. Returns {labels: {assetId: label}}.",
-      inputSchema: { assets: z.array(z.string()).min(1).max(100).describe("Asset ids, e.g. ['#14730','#14731'] or numeric strings.") },
+      inputSchema: { assets: z.array(z.string().regex(/^\s*#?\d+\s*$/, "Expected a HIP-4 asset id like '#14730'")).min(1).max(100).describe("Asset ids, e.g. ['#14730','#14731'] or numeric strings.") },
     },
     async (args) => {
-      const data = await get("/api/hip-4/labels", { assets: args.assets.join(",") });
-      return result(envelope("/api/hip-4/labels", data));
+      const ids = [...new Set((args.assets as string[]).map((a) => `#${a.trim().replace(/^#/, "")}`))];
+      const bad = ids.filter((a) => !/^#\d+[01]$/.test(a));
+      if (bad.length === ids.length) throw new Error(`Not HIP-4 outcome sides: ${bad.join(", ")}. Asset ids end in 0 (YES) or 1 (NO), e.g. '#14730'.`);
+      const ok = ids.filter((a) => !bad.includes(a));
+      const data = (await get("/api/hip-4/labels", { assets: ok.join(",") })) as Rec;
+      // Only report the ids that were asked for; the route may answer with neighbours.
+      const got = (data?.labels as Rec) ?? {};
+      const labels = Object.fromEntries(ok.filter((a) => a in got).map((a) => [a, got[a]]));
+      const missing = ok.filter((a) => !(a in got));
+      return result(envelope("/api/hip-4/labels", { labels, ...(missing.length ? { notFound: missing } : {}), ...(bad.length ? { invalid: bad, invalidNote: "HIP-4 asset ids end in 0 (YES) or 1 (NO)." } : {}) }));
     },
   );
 }

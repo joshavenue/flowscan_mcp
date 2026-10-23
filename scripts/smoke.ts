@@ -57,12 +57,13 @@ const MAX_CHARS = 40_000;
 const hip4: { outcomeId?: number; yesAssetId?: string; noAssetId?: string } = {};
 /** Mode under test: same switch the server reads. */
 const DIRECT = /^(1|true)$/i.test((process.env.FLOWSCAN_HYPERLIQUID_DIRECT ?? "").trim());
-const STRICT_TOOL_COUNT = 45;
+const STRICT_TOOL_COUNT = 54;
 const DIRECT_TOOL_COUNT = 14;
 const UPSTREAM_HOSTS = ["api.hyperliquid.xyz", "rpc.hyperliquid.xyz", "api-ui.hyperliquid.xyz", "api.hyperunit.xyz"];
 const ALLOWED_HOSTS = new Set(["www.flowscan.xyz", ...(DIRECT ? UPSTREAM_HOSTS : [])]);
 const live: { height?: number; txHash?: string } = {};
 const builderRevenue: Record<string, Json> = {};
+const hip3Compared: { symbol?: string } = {};
 
 function assert(cond: unknown, msg: string): void {
   if (!cond) throw new Error(msg);
@@ -318,11 +319,24 @@ const cases: Case[] = [
   { tool: "flowscan_hip3_daily", label: "raw", args: { metric: "volume", days: 5, raw: true }, check: (d) => assert(d.data.dates.length === 5 && d.data.series.XYZ.length === 5, "raw daily") },
   { tool: "flowscan_hip3_daily", label: "oi_by_market", args: { metric: "oi_by_market", days: 7 }, check: (d) => assert(Array.isArray(d.data.markets), "oi_by_market") },
   { tool: "flowscan_hip3_markets", args: { dex: "XYZ", assetClass: "Equities", limit: 20 }, check: (d) => assert(d.data.markets.length > 0, "markets") },
+  // Flowscan regenerates its cross-DEX comparison list (16 symbols at times, TSLA not always among them):
+  // TSLA must either have a comparison or explain why not and list the compared symbols; then test one of those.
   {
     tool: "flowscan_hip3_markets",
     label: "TSLA",
     args: { symbol: "TSLA", days: 7 },
-    check: (d) => assert(d.data.comparison?.dexes?.XYZ && Object.values(d.data.comparison.history.oi).every((a: Json) => a.length === 7), "TSLA comparison"),
+    check: (d) => {
+      const c = d.data.comparison;
+      if (c) assert(Object.values(c.history.oi).every((a: Json) => a.length === 7), "TSLA comparison history");
+      else assert(d.data.comparisonNote && d.data.comparisonSymbols.length > 0, "missing comparison not explained");
+      hip3Compared.symbol = c ? "TSLA" : d.data.comparisonSymbols[0];
+    },
+  },
+  {
+    tool: "flowscan_hip3_markets",
+    label: "compared symbol",
+    args: () => ({ symbol: hip3Compared.symbol ?? "TSLA", days: 7 }),
+    check: (d) => assert(d.data.comparison?.dexes && Object.values(d.data.comparison.history.oi).every((a: Json) => a.length === 7), "comparison for a compared symbol"),
   },
   { tool: "flowscan_hip3_dex", args: { dex: "XYZ", days: 7, limit: 10 }, check: (d) => assert(d.data.markets.length === 10 && d.data.total && d.data.daily_totals.rows.length === 7 && d.data.daily_totals.rows[0].date, "dex") },
   { tool: "flowscan_hip3_dex", label: "prefix mkts", args: { dex: "mkts", days: 3, limit: 3 }, check: (d) => assert(d.data.dex === "KM", "prefix alias") },
@@ -330,7 +344,7 @@ const cases: Case[] = [
   { tool: "flowscan_hip3_builders", label: "dex XYZ 30d", args: { dex: "XYZ", window: "30d", limit: 5 }, check: (d) => assert(d.data.builders.length > 0 && d.data.rankedBy === "XYZ.30d", "dex rank") },
   { tool: "flowscan_hip3_binance_comparison", args: { limit: 10 }, check: (d) => assert(d.data.symbols.length === 10, "binance") },
   { tool: "flowscan_hip3_binance_comparison", label: "EQUITY", args: { underlyingType: "EQUITY", limit: 5 }, check: (d) => assert(d.data.symbols.every((s: Json) => s.underlyingType === "EQUITY"), "type filter") },
-  { tool: "flowscan_hip3_binance_comparison", label: "TSLA", args: { symbol: "TSLA", days: 7 }, check: (d) => assert(d.data.binance && d.data.hip3ByDex, "TSLA binance") },
+  { tool: "flowscan_hip3_binance_comparison", label: "TSLA", args: { symbol: "TSLA", days: 7 }, check: (d) => assert(d.data.binance && (d.data.hip3ByDex || d.data.hip3Note), "TSLA binance") },
 
   // builders
   { tool: "flowscan_builders_leaderboard", args: {}, check: (d) => assert(d.data.builders.length > 0, "leaderboard") },
@@ -420,6 +434,72 @@ const cases: Case[] = [
     args: { builder: "pvp", startDate: "2026-09-01", endDate: "2026-09-30" },
     check: (d) => assert(d.data.builder.id === "pvp" && d.data.range.days === 30 && d.data.totalRevenueUsd > 0, "pvp revenue"),
   },
+
+  // terminal: positioning, order flow, liquidations, labels, search (added 2026-10)
+  { tool: "flowscan_terminal_status", args: {}, check: (d) => assert(d.data.snapshot.snapshotIso && d.data.footprint.coins.includes("BTC") && d.data.cohorts.curated.length >= 4, "terminal status") },
+  {
+    tool: "flowscan_perp_market_detail",
+    args: { market: "btc", whalesLimit: 5, clustersLimit: 5 },
+    check: (d) => {
+      assert(d.data.market === "BTC" && d.data.summary.openInterest > 0, "summary");
+      assert(d.data.leverageDistribution.length > 3 && d.data.whales.length === 5 && "tag" in d.data.whales[0], "distribution/whales");
+      assert(d.data.liquidationClusters.length <= 5 && d.data.liquidationTotals.clusterCount >= d.data.liquidationClusters.length, "clusters");
+    },
+  },
+  { tool: "flowscan_perp_market_detail", label: "unknown market", args: { market: "NOTAMARKET123" }, expectError: true },
+  {
+    tool: "flowscan_position_changes",
+    args: { market: "ETH", window: "24h", limit: 5 },
+    check: (d) => assert(d.data.window === "24h" && d.data.baselineIso && d.data.changes.length === 5 && typeof d.data.summary.opened === "number", "changes"),
+  },
+  { tool: "flowscan_position_changes", label: "closed only", args: { market: "BTC", kind: "closed", limit: 3 }, check: (d) => assert(d.data.changes.every((c: Json) => c.kind === "closed"), "kind filter") },
+  { tool: "flowscan_twaps", args: { market: "BTC", limit: 5 }, check: (d) => assert(typeof d.data.summary.count === "number" && d.data.twaps.length <= 5, "twaps") },
+  { tool: "flowscan_liquidations", args: { limit: 10 }, check: (d) => assert(d.data.market === "all" && typeof d.data.summary.count === "number", "recent liquidations") },
+  { tool: "flowscan_liquidations", label: "history", args: { view: "history", market: "BTC", hours: 24, limit: 10 }, check: (d) => assert(d.data.bucketMinutes === 1 && typeof d.data.totals.totalNotional === "number", "liquidation history") },
+  { tool: "flowscan_liquidations", label: "history needs market", args: { view: "history" }, expectError: true },
+  {
+    tool: "flowscan_order_flow",
+    args: { market: "ETH", bars: 6 },
+    check: (d) => assert(d.data.rows.length === 6 && d.data.totals.buyUsd > 0 && d.data.rows[0].t > d.data.rows[5].t, "footprint"),
+  },
+  { tool: "flowscan_order_flow", label: "flow", args: { market: "BTC", kind: "flow", interval: "15m", bars: 4 }, check: (d) => assert(d.data.rows.length === 4 && "realizedPnlUsd" in d.data.totals, "flow") },
+  { tool: "flowscan_order_flow", label: "untracked coin", args: { market: "NOTACOIN" }, expectError: true },
+  {
+    tool: "flowscan_market_history",
+    label: "open interest 30d",
+    args: { kind: "openInterest", coin: "BTC", range: "30d", limit: 5 },
+    check: (d) => assert(d.interval === "4h" && d.summary.count > 150 && d.summary.latest.oiUsd > 0, "OI history"),
+  },
+  { tool: "flowscan_market_history", label: "funding 30d rejected", args: { kind: "funding", coin: "BTC", range: "30d" }, expectError: true },
+  { tool: "flowscan_wallet_labels", args: { addresses: [VAULT, BUSY] }, check: (d) => assert(d.data.count === 2 && d.data.wallets[0].name, "labels") },
+  { tool: "flowscan_wallet_labels", label: "search", args: { search: "wintermute", limit: 3 }, check: (d) => assert(d.data.matches.length >= 1, "label search") },
+  { tool: "flowscan_wallet_labels", label: "neither arg", args: {}, expectError: true },
+  { tool: "flowscan_search", args: { query: "tsla" }, check: (d) => assert(d.data.perpMarkets.includes("xyz:TSLA"), "search market") },
+  { tool: "flowscan_search", label: "address", args: { query: VAULT }, check: (d) => assert(d.data.type === "address" && d.data.address.label?.name, "search address") },
+  {
+    tool: "flowscan_address_completed_trades",
+    args: { address: BUSY, limit: 5 },
+    check: (d) => assert(d.summary.count > 0 && d.data.length <= 5 && typeof d.summary.winRatePct === "number", "completed trades"),
+  },
+  { tool: "flowscan_perp_positions", label: "top 10k cohort", args: { market: "BTC", traderFilter: "leaderboard", limit: 5 }, check: (d) => assert(d.data.cohort === "Top 10k accounts" && d.data.total < 5000, "cohort filter") },
+  { tool: "flowscan_builders_leaderboard", label: "movers", args: { rankBy: "change", limit: 5 }, check: (d) => assert(d.data.builders[0].change >= d.data.builders[1].change, "movers sort") },
+  // regressions from the Codex retest (docs/codex-retest-2026-10-23.md)
+  { tool: "flowscan_position_changes", label: "absChange asc", args: { market: "BTC", dir: "asc", limit: 3, includeTags: false }, check: (d) => assert(Math.abs(d.data.changes[0].notionalDelta) <= Math.abs(d.data.changes[2].notionalDelta), "asc not applied") },
+  { tool: "flowscan_address_fills", label: "endTime without startTime", args: { address: BUSY, endTime: 1600000000000 }, expectError: true },
+  { tool: "flowscan_hip4_markets", label: "marketKind on questions", args: { section: "questions", marketKind: "price" }, expectError: true },
+  { tool: "flowscan_hip4_labels", label: "only requested ids", args: { assets: ["#14730", "#14739"] }, check: (d) => assert(Object.keys(d.data.labels).every((k) => k === "#14730") && d.data.invalid?.[0] === "#14739", "labels not limited to the request") },
+  { tool: "flowscan_wallet_labels", label: "schema error is JSON", args: { addresses: ["0x1234"] }, expectError: true, check: (d) => assert(d.source === "input validation" && d.route === null, "validation error not JSON") },
+  { tool: "flowscan_order_flow", label: "boundary endTime", args: { market: "BTC", bars: 4, endTime: 1792720800000 }, check: (d) => assert(d.data.candles === 4 && d.data.toIso === "2026-10-23T02:00:00.000Z", "boundary bars") },
+  {
+    tool: "flowscan_coverage",
+    label: "live prices topic",
+    args: { topic: "live prices" },
+    check: (d) => assert(DIRECT ? d.servedByThisServer === true : d.servedByThisServer === "partly" || d.servedByThisServer === false, `live prices: servedByThisServer=${d.servedByThisServer} in ${DIRECT ? "direct" : "strict"} mode`),
+  },
+  { tool: "flowscan_hip3_daily", label: "unknown dex", args: { dex: "NOT_A_DEX" }, expectError: true },
+  { tool: "flowscan_revenue_deployer_fees", label: "unknown dex", args: { dex: "NOT_A_DEX", days: 3 }, expectError: true },
+  { tool: "flowscan_hip3_daily", label: "collateral metric with dex", args: { metric: "collateral_oi", dex: "XYZ" }, expectError: true },
+  { tool: "flowscan_builder_dashboard", label: "top users", args: { builder: FOMO_SOCIAL, section: "topUsers", topUsersLimit: 5 }, check: (d) => assert(d.data.topUsers.users.length > 0, "top users") },
 ];
 
 // The small "FOMO" builder (id "fomo") is only addressable unambiguously through its address; find it from the lookup.
@@ -678,7 +758,7 @@ async function main(): Promise<void> {
   if (tools.length !== expectedTools) failures.push(`expected ${expectedTools} tools in ${DIRECT ? "direct" : "strict"} mode, got ${tools.length}`);
   const schemaChars = tools.reduce((a, t) => a + JSON.stringify(t).length, 0);
   console.log(`total tool schema: ${schemaChars} chars`);
-  if (!DIRECT && schemaChars >= 60_000) failures.push(`strict-mode tool schema is ${schemaChars} chars (limit 60000)`);
+  if (!DIRECT && schemaChars >= 75_000) failures.push(`strict-mode tool schema is ${schemaChars} chars (limit 75000)`);
   const rows: Array<{ name: string; status: string; ms: number; size: number }> = [];
   const tested = new Set<string>();
   const maxByTool = new Map<string, number>();
@@ -703,6 +783,20 @@ async function main(): Promise<void> {
         failures.push(`${name}: isError=${isError}, expected ${Boolean(c.expectError)}: ${text.slice(0, 300)}`);
       } else if (isError) {
         status = "error (expected)";
+        // Every error, including schema validation, must be the JSON {error, status, route, source} shape.
+        let body: Json = null;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          /* checked below */
+        }
+        if (!body || typeof body.error !== "string" || !("status" in body) || !("route" in body) || typeof body.source !== "string") {
+          status = "FAIL";
+          failures.push(`${name}: error is not the JSON error shape: ${text.slice(0, 200)}`);
+        } else if (c.check) {
+          const msg = c.check(body);
+          if (typeof msg === "string") throw new Error(msg);
+        }
       } else {
         const { json, truncated } = parsePayload(text);
         if (truncated) {
@@ -717,7 +811,7 @@ async function main(): Promise<void> {
         }
       }
     } catch (err) {
-      if (c.expectError) status = "error (expected)";
+      if (c.expectError && status !== "error (expected)") status = "error (expected)";
       else {
         status = "FAIL";
         failures.push(`${name}: ${(err as Error).message}`);

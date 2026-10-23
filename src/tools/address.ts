@@ -4,6 +4,7 @@ import { post } from "../client.js";
 import { defineTool } from "../register.js";
 import { ETH_ADDRESS, envelope, envelopeRows, isoOf, matches, page, pick, result, shapeInput } from "../shape.js";
 import { findDex, KNOWN_DEX_HELP } from "../dex.js";
+import { labelAddresses } from "../labels.js";
 import { stakingOverview } from "./validators.js";
 
 type Rec = Record<string, unknown>;
@@ -130,7 +131,7 @@ export function registerAddressTools(server: McpServer): void {
     {
       title: "Address overview (role, PnL summary, perp state, spot balances)",
       description:
-        "Overview of an /address page: role (user/vault/subAccount/agent/missing), lifetime PnL summary (PnL, win rate, trades, hold time, volume, fees, funding, days active, tradedPairs as count + first 30), live perp state (account value, notional, margin, withdrawable, positions with size/entry/leverage/liquidation/uPnL/ROE/funding, largest first, capped by positionsLimit) and non-zero spot balances. Perp state is the main DEX unless `dex` names a HIP-3 DEX (prefix or display name; unknown names are rejected).",
+        "Overview of an /address page: Flowscan's label for the address (name and trader tag, null if none), role (user/vault/subAccount/agent/missing), lifetime PnL summary (PnL, win rate, trades, hold time, volume, fees, funding, days active, tradedPairs as count + first 30), live perp state (account value, notional, margin, withdrawable, positions with size/entry/leverage/liquidation/uPnL/ROE/funding, largest first, capped by positionsLimit) and non-zero spot balances. Perp state is the main DEX unless `dex` names a HIP-3 DEX (prefix or display name; unknown names are rejected).",
       inputSchema: {
         address: ETH_ADDRESS,
         include: z
@@ -161,6 +162,12 @@ export function registerAddressTools(server: McpServer): void {
         want.has("spotBalances") ? info("spotClearinghouseState", args.address) : null,
       ]);
       const out: Rec = { address: args.address.toLowerCase() };
+      try {
+        const l = (await labelAddresses([args.address])).get(args.address.toLowerCase());
+        out.label = l && (l.name || l.tag) ? { name: l.name, ...(l.description ? { description: l.description } : {}), ...(l.type ? { type: l.type } : {}), tag: l.tag?.label ?? null, nameSource: l.nameSource } : null;
+      } catch {
+        out.label = null;
+      }
       if (role) out.role = role;
       if (pnl && typeof pnl === "object") {
         const ps = { ...(pnl as Rec) };
@@ -260,6 +267,8 @@ export function registerAddressTools(server: McpServer): void {
     },
     async (args) => {
       const agg = args.aggregateByTime ?? true;
+      if (args.endTime !== undefined && args.startTime === undefined) throw new Error("endTime needs startTime (Unix ms). Without startTime the tool returns the latest ~2000 fills.");
+      if (args.startTime !== undefined && args.endTime !== undefined && args.startTime > args.endTime) throw new Error("startTime is after endTime.");
       const ranged = args.startTime !== undefined;
       let all: Rec[];
       let windowMeta: Rec;
@@ -320,6 +329,7 @@ export function registerAddressTools(server: McpServer): void {
     async (args) => {
       const kind = args.kind ?? "ledger";
       const startTime = args.startTime ?? Date.now() - (kind === "funding" ? 7 : 30) * DAY;
+      if (args.endTime !== undefined && startTime > args.endTime) throw new Error(`startTime (${new Date(startTime).toISOString()}${args.startTime === undefined ? ", the default" : ""}) is after endTime; pass an earlier startTime.`);
       const addr = args.address.toLowerCase();
       const w = await fetchWindow(kind === "funding" ? "userFunding" : "userNonFundingLedgerUpdates", args.address, startTime, args.endTime, {}, args.maxPages ?? 5, (r) =>
         `${r.time}:${r.hash}:${JSON.stringify(r.delta)}`,
@@ -428,7 +438,8 @@ export function registerAddressTools(server: McpServer): void {
         })
         .sort((a, b) => Number(b.amountHype ?? 0) - Number(a.amountHype ?? 0));
       const totalDelegatedHype = dl.reduce((a, d) => a + (Number(d.amount) || 0), 0);
-      return result(envelope(ROUTE, pick({ totalDelegatedHype, validatorCount: enriched.length, delegations: enriched, history }, args.fields)));
+      const historyRows = Array.isArray(history) ? (history as Rec[]).map((h) => withIso(h, "time", "timeIso")) : history;
+      return result(envelope(ROUTE, pick({ totalDelegatedHype, validatorCount: enriched.length, delegations: enriched, history: historyRows }, args.fields)));
     },
   );
 
@@ -462,6 +473,100 @@ export function registerAddressTools(server: McpServer): void {
           })
         : (subs ?? []);
       return result(envelope(ROUTE, pick({ vaultEquities, subAccounts }, args.fields)));
+    },
+  );
+
+  defineTool(
+    server,
+    "flowscan_address_completed_trades",
+    {
+      title: "Address closed positions (round trips) with win rate and PnL",
+      description:
+        "Address 'Fills' tab with 'Aggregate into trades': each closed position as one trade, newest first (coin, long/short, open/close time, duration, entry/exit price, size, gross/funding/net PnL (net = gross + funding - fees), fees, fills, leverage, margin type, builder). `summary` covers all matched trades: count, wins, losses, winRatePct, PnL, fees, avg win/loss, profit factor, best/worst, byCoin. USDC. Open positions: flowscan_address_summary.",
+      inputSchema: {
+        address: ETH_ADDRESS,
+        coin: z.string().optional().describe("Only this market (exact, case-insensitive, e.g. 'BTC', 'xyz:TSLA')."),
+        side: z.enum(["long", "short"]).optional().describe("Only long or only short trades."),
+        startTime: z.number().int().min(0).optional().describe("Only trades closed at/after this Unix ms."),
+        endTime: z.number().int().min(0).optional().describe("Only trades closed at/before this Unix ms."),
+        ...shapeInput,
+      },
+    },
+    async (args) => {
+      if (args.startTime !== undefined && args.endTime !== undefined && args.startTime > args.endTime) throw new Error("startTime is after endTime.");
+      const raw = await info("userCompletedTrades", args.address, { limit: UPSTREAM_ROW_CAP });
+      const all = Array.isArray(raw) ? (raw as Rec[]) : [];
+      const n = (v: unknown) => Number(v) || 0;
+      const coin = args.coin ? String(args.coin).trim().toLowerCase() : undefined;
+      const trades = all
+        .filter((t) => (!coin || String(t.coin).toLowerCase() === coin) && (!args.side || String(t.position_type).toLowerCase() === args.side))
+        .filter((t) => (args.startTime === undefined || n(t.close_time) >= args.startTime) && (args.endTime === undefined || n(t.close_time) <= args.endTime))
+        .map((t) => ({
+          coin: t.coin,
+          side: String(t.position_type ?? "").toLowerCase(),
+          openTime: t.open_time,
+          openIso: isoOf(t.open_time),
+          closeTime: t.close_time,
+          closeIso: isoOf(t.close_time),
+          durationHours: round(n(t.duration_ms) / 3_600_000),
+          entryPx: n(t.entry_px),
+          exitPx: n(t.exit_px),
+          closedSize: n(t.position_closed_size),
+          maxSize: n(t.max_position_size),
+          grossPnl: n(t.gross_pnl),
+          fundingPnl: n(t.funding_pnl),
+          fees: n(t.fees),
+          netPnl: n(t.net_pnl),
+          fills: t.fills,
+          makerFills: t.maker_fills,
+          leverage: t.leverage,
+          marginType: t.is_cross === true ? "cross" : t.is_cross === false ? "isolated" : null,
+          builder: t.builder ?? null,
+        }))
+        .sort((a, b) => n(b.closeTime) - n(a.closeTime));
+      const wins = trades.filter((t) => t.netPnl > 0);
+      const losses = trades.filter((t) => t.netPnl < 0);
+      const sumWin = sumBy(wins, (t) => t.netPnl as number);
+      const sumLoss = sumBy(losses, (t) => t.netPnl as number);
+      const byCoin = new Map<string, { count: number; netPnl: number; wins: number }>();
+      for (const t of trades) {
+        const c = byCoin.get(String(t.coin)) ?? { count: 0, netPnl: 0, wins: 0 };
+        c.count++;
+        c.netPnl += t.netPnl;
+        if (t.netPnl > 0) c.wins++;
+        byCoin.set(String(t.coin), c);
+      }
+      const best = trades.reduce<Rec | null>((m, t) => (!m || t.netPnl > n(m.netPnl) ? t : m), null);
+      const worst = trades.reduce<Rec | null>((m, t) => (!m || t.netPnl < n(m.netPnl) ? t : m), null);
+      const summary = trades.length
+        ? {
+            count: trades.length,
+            wins: wins.length,
+            losses: losses.length,
+            winRatePct: Math.round((wins.length / trades.length) * 10000) / 100,
+            netPnlUsdc: round(sumBy(trades, (t) => t.netPnl as number)),
+            grossPnlUsdc: round(sumBy(trades, (t) => t.grossPnl as number)),
+            fundingPnlUsdc: round(sumBy(trades, (t) => t.fundingPnl as number)),
+            feesUsdc: round(sumBy(trades, (t) => t.fees as number)),
+            avgWinUsdc: wins.length ? round(sumWin / wins.length) : null,
+            avgLossUsdc: losses.length ? round(sumLoss / losses.length) : null,
+            profitFactor: sumLoss < 0 ? round(sumWin / Math.abs(sumLoss)) : null,
+            best: best ? { coin: best.coin, side: best.side, netPnl: best.netPnl, closeIso: best.closeIso } : null,
+            worst: worst ? { coin: worst.coin, side: worst.side, netPnl: worst.netPnl, closeIso: worst.closeIso } : null,
+            byCoin: [...byCoin.entries()].sort((a, b) => Math.abs(b[1].netPnl) - Math.abs(a[1].netPnl)).slice(0, 15).map(([c, v]) => ({ coin: c, count: v.count, wins: v.wins, netPnlUsdc: round(v.netPnl) })),
+            coveredRange: { fromIso: trades.at(-1)!.closeIso, toIso: trades[0].closeIso },
+          }
+        : null;
+      const { items, paging } = page(trades, args, 50);
+      return result(
+        envelopeRows(ROUTE, items, args.fields, {
+          address: args.address.toLowerCase(),
+          summary,
+          paging,
+          ...(all.length >= UPSTREAM_ROW_CAP ? { capped: true, capNote: `Flowscan returned its maximum of ${UPSTREAM_ROW_CAP} trades; older trades are missing from rows and summary.` } : {}),
+          note: trades.length === 0 ? "No closed trades match (the account may only have open positions, or none at all)." : "summary covers every matched trade, not only this page. PnL in USDC.",
+        }),
+      );
     },
   );
 

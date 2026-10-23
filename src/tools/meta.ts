@@ -15,7 +15,7 @@ export function registerMetaTools(server: McpServer): void {
       title: "What Flowscan shows and which tool to use",
       description: direct
         ? "Start here when unsure. Returns the map of flowscan.xyz pages -> tools (including block/tx pages, live feed, prices and other panels Flowscan loads from Hyperliquid, served in this hyperliquid-direct mode), which hosts are contacted, the mainnet-only rule and output-shaping conventions. Optionally filter by a keyword (e.g. 'block', 'price', 'hip-3'). Also lists HIP-3 dex display names vs on-chain prefixes."
-        : "Start here when unsure. Returns the map of flowscan.xyz pages -> tools, what Flowscan does NOT serve (block/tx lookups, prices), the mainnet-only rule and output-shaping conventions. Optionally filter by a keyword (e.g. 'revenue', 'address', 'hip-3'): matching pages plus matching notServed items, with servedByThisServer=false when only notServed matches. Also lists HIP-3 dex display names vs on-chain prefixes.",
+        : "Start here when unsure. Returns the map of flowscan.xyz pages -> tools, what Flowscan does NOT serve (block/tx lookups, prices), the mainnet-only rule and output-shaping conventions. Optionally filter by a keyword (e.g. 'revenue', 'address', 'hip-3'): matching pages plus matching notServed items, with servedByThisServer=false when only notServed matches and partly when both do. Also lists HIP-3 dex display names vs on-chain prefixes.",
       inputSchema: { topic: z.string().optional().describe("Keyword to filter pages/tools by.") },
       openWorld: false,
     },
@@ -33,7 +33,9 @@ export function registerMetaTools(server: McpServer): void {
         topic: args.topic,
         pages,
         notServedMatches,
-        servedByThisServer: pages.length > 0 ? true : notServedMatches.length > 0 ? false : null,
+        // A page can match only because its text mentions what is not served there ("live prices need direct mode").
+        servedByThisServer: pages.length > 0 && notServedMatches.length === 0 ? true : notServedMatches.length > 0 && pages.length === 0 ? false : pages.length > 0 ? "partly" : null,
+        ...(pages.length > 0 && notServedMatches.length > 0 ? { servedNote: "Both served pages and notServed items match. Read notServedMatches: if the specific thing asked for is listed there, it is not served in this mode." } : {}),
       });
     },
   );

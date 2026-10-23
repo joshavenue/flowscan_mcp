@@ -11,8 +11,8 @@
  *   npx tsx scripts/eval/run.ts --mcp scripts/eval/mcp.direct.json --run-id direct-r1   # Hyperliquid-direct mode
  *
  * The mode is read from the MCP config: FLOWSCAN_HYPERLIQUID_DIRECT=1|true in the
- * server env means "direct" (59 tools, five allowlisted hosts), otherwise
- * "strict" (45 tools, www.flowscan.xyz only). Prompts with an `expectDirect`
+ * server env means "direct" (68 tools, five allowlisted hosts), otherwise
+ * "strict" (54 tools, www.flowscan.xyz only). Prompts with an `expectDirect`
  * rubric use it in direct mode. The mode is recorded in every record and in
  * results/<run-id>/meta.json.
  *
@@ -56,8 +56,8 @@ export interface Prompt {
 export interface Expect { tools: string[]; behaviour: string; notes: string; requireAll?: string[]; ordered?: boolean; numeric?: boolean; groundTruth?: string; toolOptional?: boolean }
 export type Mode = "strict" | "direct";
 export const MODES: Record<Mode, { tools: number; hosts: string[] }> = {
-  strict: { tools: 45, hosts: ["www.flowscan.xyz"] },
-  direct: { tools: 59, hosts: ["www.flowscan.xyz", "api.hyperliquid.xyz", "rpc.hyperliquid.xyz", "api-ui.hyperliquid.xyz", "api.hyperunit.xyz"] },
+  strict: { tools: 54, hosts: ["www.flowscan.xyz"] },
+  direct: { tools: 68, hosts: ["www.flowscan.xyz", "api.hyperliquid.xyz", "rpc.hyperliquid.xyz", "api-ui.hyperliquid.xyz", "api.hyperunit.xyz"] },
 };
 export interface ToolCall {
   id: string;
@@ -122,7 +122,10 @@ function mcpConfigFor(id: string): { cfgPath: string; fetchLog: string } {
   fs.writeFileSync(fetchLog, "");
   const cfg = structuredClone(baseMcp);
   const s = cfg.mcpServers.flowscan;
-  s.args = ["--import", path.join(EVAL_DIR, "fetch-log.mjs"), ...s.args];
+  // mcp.json names the server as dist/index.js relative to the repo root, so the eval runs from any checkout.
+  const args = (s.args as string[]).map((a) => (a.endsWith(".js") && !path.isAbsolute(a) ? path.join(ROOT, a) : a));
+  if (!args.some((a) => a.endsWith(".js") && fs.existsSync(a))) throw new Error(`MCP server script not found: ${args.join(" ")}. Run npm run build first.`);
+  s.args = ["--import", path.join(EVAL_DIR, "fetch-log.mjs"), ...args];
   s.env = { ...(s.env ?? {}), FLOWSCAN_EVAL_FETCH_LOG: fetchLog };
   const cfgPath = path.join(outDir, "mcp", `${id}.json`);
   fs.writeFileSync(cfgPath, JSON.stringify(cfg));
@@ -297,6 +300,11 @@ async function main() {
       done++;
       cost += rec.totalCostUsd ?? 0;
       const tools = rec.toolCalls.map((c) => c.name.replace("mcp__flowscan__flowscan_", "") + (c.isError ? "!" : "")).join(",");
+      if (rec.mcpStatus !== "connected" && done <= 3) {
+        // A server that does not connect would turn the whole run into tool-less answers; stop early.
+        console.error(`[${p.id}] flowscan MCP server status: ${rec.mcpStatus}; aborting the run. Check mcp.json and npm run build.`);
+        process.exit(1);
+      }
       console.log(`[${done}/${prompts.length}] ${p.id} ${rec.subtype ?? "CRASH"} turns=${rec.numTurns} $${(rec.totalCostUsd ?? 0).toFixed(3)} ${(rec.wallMs / 1000).toFixed(0)}s tools=[${tools}] hosts=${Object.keys(rec.fetches.hosts).join("|")} total=$${cost.toFixed(2)}`);
     }
   }

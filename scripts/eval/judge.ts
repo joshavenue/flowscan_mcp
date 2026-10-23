@@ -19,6 +19,9 @@ const runId = opt("run-id")!;
 if (!runId) throw new Error("--run-id required");
 const concurrency = Number(opt("concurrency", "4"));
 const model = opt("model", "opus")!;
+/** Same neutral, empty working directory as run.ts (no CLAUDE.md leaks into the judge). */
+const NEUTRAL_CWD = opt("cwd", "/tmp/eval-cwd")!;
+fs.mkdirSync(NEUTRAL_CWD, { recursive: true });
 const only = opt("only")?.split(",");
 const force = args.includes("--force");
 const outDir = path.join(EVAL_DIR, "results", runId);
@@ -40,10 +43,11 @@ const addDays = (ymd: string, n: number) => {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 };
-const STRICT_SERVED = `- The agent's only tools are the flowscan MCP server in STRICT mode (45 tools named mcp__flowscan__flowscan_*), which only contacts www.flowscan.xyz.
+const STRICT_SERVED = `- The agent's only tools are the flowscan MCP server in STRICT mode (54 tools named mcp__flowscan__flowscan_*), which only contacts www.flowscan.xyz.
 - NOT SERVED in strict mode (correct behaviour = say so plainly, ideally point to the flowscan.xyz page; never invent values): block details/heights, transaction details by hash, the live block/tx feed, live prices (HYPE/USD, BTC, ETH mark...), perp/spot candles, order books, an address's portfolio chart, EVM balance, Unit bridge operations, and testnet (Flowscan is mainnet-only). Priority gas is only available in HYPE; converting it to USD requires a HYPE price the server cannot provide.
-- Prices that ARE served: entry/liquidation prices in positions, tokenized-stock marks, HIP-4 outcome prices, weekend TradFi closes, Binance RWA last prices.`;
-const DIRECT_SERVED = `- The agent's only tools are the flowscan MCP server in HYPERLIQUID-DIRECT mode (59 tools named mcp__flowscan__flowscan_*): the 45 Flowscan tools (www.flowscan.xyz) plus 14 direct tools that make the same requests the Flowscan web page makes in the browser to api.hyperliquid.xyz, rpc.hyperliquid.xyz, api-ui.hyperliquid.xyz and api.hyperunit.xyz: flowscan_block, flowscan_transaction, flowscan_live_feed, flowscan_prices, flowscan_candles, flowscan_order_book, flowscan_recent_trades, flowscan_spot_tokens, flowscan_perp_dexs, flowscan_validator_summaries, flowscan_borrow_lend_reserves, flowscan_address_portfolio, flowscan_address_evm_balance, flowscan_address_unit_operations. Their results carry source (upstream URL), shownOn (Flowscan page) and mode "hyperliquid-direct".
+- Prices that ARE served: entry/liquidation prices in positions, tokenized-stock marks, HIP-4 outcome prices, weekend TradFi closes, Binance RWA last prices.
+- Also served in strict mode (since 2026-10-23): Flowscan's address names and trader tags (flowscan_wallet_labels, labels in position rows and address_summary), liquidations, order flow (footprint), open-interest history, position changes, market distributions and liquidation clusters, TWAPs, closed trades of an address, builder week-over-week change and top users.`;
+const DIRECT_SERVED = `- The agent's only tools are the flowscan MCP server in HYPERLIQUID-DIRECT mode (68 tools named mcp__flowscan__flowscan_*): the 54 Flowscan tools (www.flowscan.xyz) plus 14 direct tools that make the same requests the Flowscan web page makes in the browser to api.hyperliquid.xyz, rpc.hyperliquid.xyz, api-ui.hyperliquid.xyz and api.hyperunit.xyz: flowscan_block, flowscan_transaction, flowscan_live_feed, flowscan_prices, flowscan_candles, flowscan_order_book, flowscan_recent_trades, flowscan_spot_tokens, flowscan_perp_dexs, flowscan_validator_summaries, flowscan_borrow_lend_reserves, flowscan_address_portfolio, flowscan_address_evm_balance, flowscan_address_unit_operations. Their results carry source (upstream URL), shownOn (Flowscan page) and mode "hyperliquid-direct".
 - In this mode blocks, transactions, the live feed, live prices, candles, order books, recent trades, validator APR/uptime, borrow/lend APYs, portfolio history, HyperEVM balance and Unit operations ARE available and should be answered with the direct tools. Still NOT available: testnet (mainnet only), and any host outside that allowlist. A direct-mode figure should be attributed to Hyperliquid's public endpoint as shown on the Flowscan page; live prices/feeds are snapshots and should carry a time.
 - There is no direct tool for arbitrary Hyperliquid info requests (e.g. userFills); address data comes from the Flowscan address tools.`;
 const contextFor = (today: string, mode: string) => `Facts about the system under test (use these, not your own knowledge of Hyperliquid):
@@ -95,7 +99,7 @@ function runJudge(prompt: string): Promise<{ code: number | null; stdout: string
   return new Promise((resolve) => {
     const t0 = Date.now();
     const child = spawn("timeout", ["300", "claude", "-p", "--model", model, "--output-format", "json", "--tools", "", "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence", "--max-turns", "2"], {
-      cwd: "/tmp/eval-cwd",
+      cwd: NEUTRAL_CWD,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";

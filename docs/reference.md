@@ -4,7 +4,7 @@ The complete reference for every tool, parameter, output field and setting. For 
 
 An MCP server that exposes the data shown on [flowscan.xyz](https://www.flowscan.xyz) as tools for AI agents. Flowscan is a real-time explorer and analytics site for the Hyperliquid blockchain (HyperCore, HIP-3 perp DEXs and HIP-4 outcome markets). It is not related to the Flow blockchain. With this server an agent can answer questions such as "what did Hyperliquid earn in fees yesterday", "who holds the largest BTC longs", "which builder code earned the most this week" or "what positions does 0x... have open", using the same numbers a person would see on the site.
 
-- 45 read-only tools, grouped by Flowscan page; 59 with the opt-in [Hyperliquid-direct mode](#two-modes)
+- 54 read-only tools, grouped by Flowscan page; 68 with the opt-in [Hyperliquid-direct mode](#two-modes)
 - Hyperliquid mainnet only (Flowscan has no testnet mode)
 - No API key
 - stdio transport by default, Streamable HTTP with `--http` ([Remote (HTTP) and Docker](#remote-http-and-docker)); Node.js 20 or newer (22 or newer for the three WebSocket tools of direct mode)
@@ -20,10 +20,10 @@ The server has two modes. The default is strict; the second is opt-in.
 | | Strict (default) | Hyperliquid-direct (opt-in) |
 | --- | --- | --- |
 | Enable | nothing to set | `FLOWSCAN_HYPERLIQUID_DIRECT=1` (or `true`) in the server's environment |
-| Tools | 45 | 59: the same 45 plus 14 [Hyperliquid-direct tools](#hyperliquid-direct-tools-opt-in) |
+| Tools | 54 | 68: the same 54 plus 14 [Hyperliquid-direct tools](#hyperliquid-direct-tools-opt-in) |
 | Hosts contacted | only `https://www.flowscan.xyz` | `www.flowscan.xyz` plus exactly `api.hyperliquid.xyz`, `rpc.hyperliquid.xyz`, `api-ui.hyperliquid.xyz` and `api.hyperunit.xyz` (HTTPS, and WSS to the two Hyperliquid WebSocket endpoints) |
 | Adds | | block and transaction lookups, the live block/tx feed, prices, candles, order books, recent trades, spot token directory, perp DEX list, validator APR/uptime, borrow/lend APYs, and the address page's portfolio chart, HyperEVM balance and Unit bridge operations |
-| Tool list size (JSON schemas the client loads) | about 57,300 characters | about 71,100 characters |
+| Tool list size (JSON schemas the client loads) | about 73,000 characters | about 86,500 characters |
 
 The tool list is loaded into the model's context, so direct mode costs roughly a quarter more context on every conversation. Enable it only if you need the extra panels.
 
@@ -127,7 +127,7 @@ To share it with a project, commit a `.mcp.json` at the project root with the sa
 }
 ```
 
-Cursor users have reported a cap of 40 MCP tools across all servers; strict mode has 45. If you hit it, see [Limiting the tool list](clients.md#limiting-the-tool-list).
+Cursor users have reported a cap of 40 MCP tools across all servers; strict mode has 54. If you hit it, see [Limiting the tool list](clients.md#limiting-the-tool-list).
 
 ### Codex
 
@@ -198,7 +198,7 @@ Clients that connect to a URL instead of starting a process (ChatGPT, the OpenAI
 
 ```sh
 npx -y github:joshavenue/flowscan_mcp --http     # MCP endpoint: http://127.0.0.1:8787/mcp
-curl http://127.0.0.1:8787/healthz                # {"ok":true,"mode":"strict","tools":45,...}
+curl http://127.0.0.1:8787/healthz                # {"ok":true,"mode":"strict","tools":54,...}
 ```
 
 `--port <n>` and `--host <addr>` (or `PORT`, `HOST`, `FLOWSCAN_MCP_TRANSPORT=http`) change the defaults. The server is stateless by default (`--stateful` keeps `Mcp-Session-Id` sessions) and also serves the legacy HTTP+SSE transport on `/sse` for older clients. It has no authentication: it binds `127.0.0.1` and accepts only local `Host` headers unless `FLOWSCAN_MCP_ALLOWED_HOSTS` names more, and refuses browser origins not listed in `FLOWSCAN_MCP_CORS`.
@@ -241,24 +241,22 @@ The server is most accurate when the model also has the tool-selection rules (wh
 
 ## Tools
 
-These 45 tools are available in both modes. All tools are read-only (annotated `readOnlyHint`). Required parameters are in **bold**. "fields/limit/offset" means the tool accepts the standard [output-shaping](#output-shaping) parameters; "fields" alone means it only accepts `fields`. Default page sizes are noted where a tool pages a list. Each tool's description names the Flowscan page it mirrors; the route is in the `source` field of every result.
+These 54 tools are available in both modes. All tools are read-only (annotated `readOnlyHint`). Required parameters are in **bold**. "fields/limit/offset" means the tool accepts the standard [output-shaping](#output-shaping) parameters; "fields" alone means it only accepts `fields`. Default page sizes are noted where a tool pages a list. Each tool's description names the Flowscan page it mirrors; the route is in the `source` field of every result.
 
 ### Start here
 
 | Tool | Returns | Key params |
 | --- | --- | --- |
 | `flowscan_coverage` | Map of Flowscan pages to tools, what is not served, HIP-3 DEX display names vs on-chain prefixes (`hip3DexNames`), the mainnet-only rule and output conventions. With `topic`, also `notServedMatches` and `servedByThisServer` (false when the topic only matches something this server cannot serve). No network call. | `topic` (keywords, e.g. `revenue`, `hip-3`, `tx hash`) |
+| `flowscan_search` | What a query is and which tool to call next: an address (Flowscan label and trader tag, whether it is a builder or validator), tx hash, block number, HIP-4 asset id, perp or HIP-3 market, tokenized stock, HIP-3 DEX, builder, validator, named wallet or HIP-4 market. Mirrors the site's search box. | **`query`**, `limit` (per group, default 5) |
+| `flowscan_wallet_labels` | Flowscan's names for known addresses and its trader tags (style, profitability level, net PnL since Aug 2025, delta neutral), from `/api/perp-snapshot/wallets/names`, `/wallets/lookup` and the known-address list in the site's JavaScript. Label up to 100 `addresses`, or `search` names. | `addresses` or `search`, `limit` |
 
 ### Homepage (`/`)
 
 | Tool | Returns | Key params |
 | --- | --- | --- |
 | `flowscan_stablecoin_margin` | "Stablecoin Perp Margin" panel: stablecoin value on HyperCore split into spot balances and perp margin, overall and per token (USDC, USDT, USDE, USDH): balances, holders/traders, average/median, total value, market share. USD. | fields |
-| `flowscan_perp_markets` | Perp positioning snapshot for every perp market (about 330, including HIP-3 markets like `xyz:TSLA`): long/short counts and notional, ratios, open interest, average entry, median leverage, unique addresses, `snapshotIso`/`snapshotAgeSeconds`. | `market`, `sortBy` (default `openInterest`), fields/limit/offset (default 60) |
-| `flowscan_perp_positions` | Open positions in one market, largest first: address, signed size, notional, side, entry, leverage, liquidation price, account value, funding PnL, all-time PnL, size change since the previous snapshot; `total`/`totalPages`, `snapshotIso`/`snapshotAgeSeconds`; `marketSummary` (whole market, unfiltered: long/short counts and notional, OI, median leverage, average entry) and `filteredSideSummary` (only the rows matching the filters, with the applied `filter`). A bare HIP-3 symbol (`TSLA`) resolves to `xyz:TSLA` when unique; otherwise the error lists candidates. | **`market`** (case-insensitive), `side`, `sort` (`notional` default, `size`), `dir`, `minSize`/`maxSize`, `minNotional`/`maxNotional`, `minEntry`/`maxEntry`, `minLiq`/`maxLiq`, `minReturn`/`maxReturn`, `markPx`, `limit` (default 50, max 200), `page` (1-based), fields |
-| `flowscan_address_perp_positions` | One address's open perp positions across all markets (including HIP-3) from the latest snapshot, sorted by notional, with `totalNotional` and `totalPositions`. | **`address`**, `market`, `side`, fields/limit/offset (default 50) |
 
-`openInterest` in the perp snapshot (and OI in the HIP-3 tools) is Flowscan's two-sided figure: long notional + short notional. That is twice the one-sided OI some other interfaces show. In direct mode, `flowscan_prices` returns Hyperliquid's own figure, which is on the same two-sided basis (`openInterestUsdTwoSided`, directly comparable), and `openInterestUsdOneSided` (half). Always say which one you quote. The homepage "24h Revenue" card is served by the revenue tools below.
 
 ### Revenue (`/revenue`)
 
@@ -275,15 +273,16 @@ Flowscan's headline "Combined" revenue is native HyperCore fees + HIP-3 HyperCor
 
 | Tool | Returns | Key params |
 | --- | --- | --- |
-| `flowscan_address_summary` | Account role (user/vault/subAccount/agent/missing), lifetime PnL summary (PnL, win rate, trades, hold time, volume, fees, funding, days active, `tradedPairs` as `{count, first30}`), live perp state (account value, notional, margin, withdrawable, positions with size, entry, leverage, liquidation, uPnL, ROE, funding; largest first) and non-zero spot balances. | **`address`**, `include` (any of `role`, `pnlSummary`, `perpState`, `spotBalances`; default all), `dex` (HIP-3 DEX for perp state, display name or prefix; unknown names are rejected; default main DEX), `positionsLimit` (default 50), `balancesLimit` (default 50), fields |
+| `flowscan_address_summary` | Flowscan `label` (name and trader tag, or null), account role (user/vault/subAccount/agent/missing), lifetime PnL summary (PnL, win rate, trades, hold time, volume, fees, funding, days active, `tradedPairs` as `{count, first30}`), live perp state (account value, notional, margin, withdrawable, positions with size, entry, leverage, liquidation, uPnL, ROE, funding; largest first) and non-zero spot balances. | **`address`**, `include` (any of `role`, `pnlSummary`, `perpState`, `spotBalances`; default all), `dex` (HIP-3 DEX for perp state, display name or prefix; unknown names are rejected; default main DEX), `positionsLimit` (default 50), `balancesLimit` (default 50), fields |
 | `flowscan_address_orders` | `open`: resting orders on every DEX. `openDetailed`: main-DEX orders with trigger/TP-SL/reduce-only/TIF details (upstream max 100, then `capped`). `historical`: the newest ~2000 orders with final status, `countsByStatus` over all of them, and `coveredRange`/`capped`. Always `count` of matching orders; times have ISO twins. | **`address`**, `kind` (`open` default, `openDetailed`, `historical`), `coin`, fields/limit/offset (default 100 for `open`, 50 otherwise) |
 | `flowscan_address_fills` | Fills, newest first: coin, price, size, side, direction, closed PnL, fee, tx hash, time and `timeIso`. `totals` over ALL matched fills in `coveredRange` (not just the page): `count`, `closedPnlUsdc`, `feesUsdc`, `feesByToken`, `volumeUsd` (px x sz), `byCoin`. Without `startTime`: the latest ~2000 fills. With `startTime`: follows pages past the upstream 2000-row cap (up to `maxPages`); if still `capped`, `nextStartTime` + `capNote`. | **`address`**, `startTime`, `endTime` (Unix ms), `aggregateByTime` (default true), `coin` (applied before totals), `maxPages` (default 5, max 10), fields/limit/offset (default 50) |
 | `flowscan_address_ledger` | Newest first, rows with `timeIso`. `ledger`: deposits, withdrawals, sends, transfers, vault and staking moves; `totals.byType` `{count, sumUsdc, inUsdc, outUsdc}`. `funding`: hourly payments; `totals` `{count, netUsdc, paidUsdc, receivedUsdc, byCoin}` (netUsdc > 0 means received). Totals cover ALL matched rows in `coveredRange`. Same `maxPages`/`capped`/`nextStartTime` handling as fills. | **`address`**, `kind` (`ledger` default, `funding`), `startTime` (default 30 days ago for ledger, 7 days for funding), `endTime`, `coin` (applied before totals), `maxPages` (default 5, max 10), fields/limit/offset (default 50 for ledger, 100 for funding) |
 | `flowscan_address_staking` | `totalDelegatedHype`, `validatorCount`, delegations `{validator, validatorName, commission_bps, is_jailed, amountHype, lockedUntil, lockedUntilIso}` and staking history, newest first. | **`address`**, `historyLimit` (default 50, max 500), fields |
 | `flowscan_address_vaults_subaccounts` | Vault equities (vault, equity, lock-up) and sub-accounts (name, address, account value, notional, withdrawable, open positions, non-zero spot balances). | **`address`**, fields |
+| `flowscan_address_completed_trades` | "Fills" tab with "Aggregate into trades": closed positions as round trips (coin, side, open/close time, entry/exit, size, gross/funding/net PnL, fees, fills, leverage) with `summary` (count, wins, losses, win rate, PnL, fees, average win/loss, profit factor, best/worst, byCoin). | **`address`**, `coin`, `side`, `startTime`, `endTime`, fields/limit/offset (50) |
 | `flowscan_address_extras` | Smaller widgets: approved builders (with max fee), HyperCore borrow/lend state and health, API rate limit, TWAP slice fills. | **`address`**, **`kind`** (`approvedBuilders`, `borrowLend`, `rateLimit`, `twapSliceFills`), fields/limit/offset (default 100 for lists) |
 
-`flowscan_address_perp_positions` (homepage section) also takes an address. For orders, fills and ledger, quote `count`, `countsByStatus` and `totals` rather than adding rows; `paging.rowsReturned` counts the rows in the (possibly capped) upstream response, not every row in the period.
+`flowscan_address_perp_positions` (terminal section) also takes an address. `flowscan_address_summary` includes Flowscan's `label` for the address. For orders, fills and ledger, quote `count`, `countsByStatus` and `totals` rather than adding rows; `paging.rowsReturned` counts the rows in the (possibly capped) upstream response, not every row in the period.
 
 ### Staking (`/validators`)
 
@@ -314,7 +313,7 @@ Flowscan's headline "Combined" revenue is native HyperCore fees + HIP-3 HyperCor
 
 | Tool | Returns | Key params |
 | --- | --- | --- |
-| `flowscan_hip4_markets` | `active`: slim rows (outcomeId, name, market type, asset ids, underlying/target/expiry, `yesMark`/`noMark` = implied probability 0 to 1, `yesChange24h`, `volume24h`, `totalVolume`, deployer, question), sorted by `sortBy`. `settled`: resolved outcomes. `questions`: question groups. `all`: all three. `full: true` for complete rows (descriptions, prev-day prices). | `section` (`active` default, `settled`, `questions`, `all`), `search`, `category`, `sortBy` (`volume24h` default, `totalVolume`, `yesMark`, `change24h`), `order` (`desc` default, `asc`), `full`, `includeContexts` (with `full`: raw spot contexts), `settledLimit` (default 100), fields/limit/offset (default 20; 10 per list with `all`) |
+| `flowscan_hip4_markets` | `active`: slim rows (outcomeId, name, market type, asset ids, underlying/target/expiry, `yesMark`/`noMark` = implied probability 0 to 1, `yesChange24h`, `volume24h`, `totalVolume`, deployer, question), sorted by `sortBy`. `settled`: resolved outcomes. `questions`: question groups. `all`: all three. `full: true` for complete rows (descriptions, prev-day prices). | `section` (`active` default, `settled`, `questions`, `all`), `search`, `category`, `marketKind` (`price`, `events`, `canonical`, the page's top filter), `deployer`, `sortBy` (`volume24h` default, `totalVolume`, `yesMark`, `change24h`), `order` (`desc` default, `asc`), `full`, `includeContexts` (with `full`: raw spot contexts), `settledLimit` (default 100), fields/limit/offset (default 20; 10 per list with `all`) |
 | `flowscan_hip4_outcome` | YES and NO candles for one outcome (`[openTime, open, high, low, close, volume, trades]`), per-side trade stats, and the settlement record for settled outcomes. | **`outcomeId`**, `yesAssetId`/`noAssetId` (default `#<outcomeId>0` / `#<outcomeId>1`; `#` is added if missing), `interval` (`1m`, `5m`, `15m`, `1h` default, `4h`, `1d`), `days` (default 7, max 90), `settled`, fields |
 | `flowscan_hip4_labels` | Readable labels for HIP-4 asset ids such as `#14730`. | **`assets`** (1 to 100 ids) |
 
@@ -331,7 +330,7 @@ Flowscan's headline "Combined" revenue is native HyperCore fees + HIP-3 HyperCor
 | `flowscan_weekend_weeks` | Tracked weekends, newest first (`fridayCloseTs` is the week id, `sundayCloseTs`, ISO twins, status, average % change, risers/fallers), optionally the next ~12 weekend/holiday sessions. | `includeSchedule`, fields/limit/offset (default 26) |
 | `flowscan_weekend_prices` | For HIP-3 TradFi perps (`xyz:TSLA`, `xyz:GOLD`, ...): Friday-close, Sunday-close (after the weekend) and live prices (during it), with % and dollar change. | `week` (`fridayCloseTs` in ms or a YYYY-MM-DD date in that weekend; default latest), `market`, fields |
 | `flowscan_weekend_positions` | Per perp market: long/short counts and notional at Friday close vs the latest snapshot, new/closed positions, net changes, optionally the top 5 address changes. | `week`, `market`, `sortBy`, `includeTopAddressChanges`, fields/limit/offset (default 50) |
-| `flowscan_weekend_coin_changes` | One HIP-3 TradFi market's Friday-to-Sunday move for every tracked weekend, with ISO timestamps. A bare symbol (`TSLA`) resolves to `xyz:TSLA`; crypto has no weekend data. | **`coin`** (e.g. `xyz:TSLA` or `TSLA`), fields |
+| `flowscan_weekend_coin_changes` | One HIP-3 TradFi market's Friday-to-Sunday move for every tracked weekend, with ISO timestamps. A bare symbol (`TSLA`) resolves to `xyz:TSLA`; crypto has no weekend data. `includeFunding` adds each weekend's funding (hours, mean hourly rate, sum, annualized) from `/api/weekend/funding`. | **`coin`** (e.g. `xyz:TSLA` or `TSLA`), `includeFunding`, fields |
 
 ### Builders (`/builders`, `/builders/{id}`)
 
@@ -339,21 +338,36 @@ Flowscan's headline "Combined" revenue is native HyperCore fees + HIP-3 HyperCor
 | --- | --- | --- |
 | `flowscan_builder_lookup` | Resolves a builder name, id or address (substring) to candidates with id, name, category, address, revenue and volume per window, total users, and `aliasIds` where present. Exact matches first; `ambiguous` is true when more than one fits. | **`query`**, `limit` (default 20) |
 | `flowscan_builder_revenue` | One builder's total and daily revenue (USD) over any range, cross-checked between `/api/builders/all-daily-revenue` and `/api/dashboard/builder-daily-series` (both totals with the dates each covers; `perKeyTotals`/`usedKeys` when revenue appears under several keys). An ambiguous name returns `ambiguous: true` with candidates. Dates are checked before any request: a future start or start after end is an error, and the end is clamped to yesterday (UTC). | **`builder`** (0x address preferred, `id:<id>`, or an unambiguous name), `days` (default 30, ending yesterday UTC) or `startDate`/`endDate`, fields/limit/offset (default 60 daily rows, newest first) |
-| `flowscan_builders_leaderboard` | "Builder Arena": about 1800 builders ranked by one metric over a fixed window. Compact rows `{rank, id, name, category, value, <metric>, revenueAllTime, totalUsers}`, or every metric with `full`; `sortedBy`. | `metric` (`revenue` default, `volume`, `new_users`, `total_users`, `avg_revenue_per_user_all_time`), `window` (`1d`, `7d` default, `30d`, `90d`, `all_time`), `category`, `search`, `minUsers` (default 0), `full`, fields/limit/offset (default 25) |
+| `flowscan_builders_leaderboard` | "Builder Arena": about 1,900 builders ranked by one metric over a fixed window. Compact rows `{rank, id, name, category, value, previous, change, changePct, sharePct, <metric>, revenueAllTime, totalUsers}`, or every metric with `full`; `sortedBy` and `totals`. `rankBy: "change"`/`"changePct"` (or `"drop"`/`"dropPct"`) ranks movers against the previous window, as the Weekly Champions and Market Movers panels do. | `metric` (`revenue` default, `volume`, `new_users`, `total_users`, `avg_revenue_per_user_all_time`), `window` (`1d`, `7d` default, `30d`, `90d`, `all_time`), `category`, `search`, `minUsers` (default 0), `rankBy` (`value` default), `minPrev`, `full`, fields/limit/offset (default 25) |
 | `flowscan_builders_summary` | All-time builder revenue, volume, users and avg revenue per user, overall and per category, plus the per-builder all-time list. | fields/limit/offset (default 50) |
 | `flowscan_builders_daily_revenue` | Revenue per builder per UTC day for a date range, with per-builder and grand totals (top 20 builders by default). Invalid dates are an error; a future end date is clamped with a note. | `startDate`, `endDate` (YYYY-MM-DD; default last 30 days ending yesterday), `builder` (id/address substring), `top` (default 20), fields |
 | `flowscan_builders_user_series` | Daily active traders and new traders since 2025-07-27, overall or per builder. | `builder`, `days` (default 30), `metric` (`both` default, `traders`, `newTraders`), fields |
-| `flowscan_builder_dashboard` | One builder's dashboard over a fixed window ending yesterday (UTC): stats (volume, revenue, fills, unique/new traders, volume shares, run-rate), daily series, volume/revenue by asset; `resolvedBuilder` when a name or id was resolved. | **`builder`** (0x address preferred, `id:<id>`, or a name; ambiguous names return candidates), `window` (`30d` default, `7d`, `90d`, `all`), `section` (`all` default, `stats`, `daily`, `assets`), `days` (daily series length, default 90), `assetsLimit` (default 40), fields |
+| `flowscan_builder_dashboard` | One builder's dashboard over a fixed window: stats (volume, revenue, fills, unique/new traders, volume shares, run-rate), daily series and volume/revenue by asset (complete UTC days ending yesterday), and top users by fees paid (`/api/hydromancer/builder-top-users`; Flowscan does not report that window's exact dates); `resolvedBuilder` when a name or id was resolved. | **`builder`** (0x address preferred, `id:<id>`, or a name; ambiguous names return candidates), `window` (`30d` default, `7d`, `90d`, `all`), `section` (`all` default, `stats`, `daily`, `assets`, `topUsers`), `topUsersLimit` (default 20), `days` (daily series length, default 90), `assetsLimit` (default 40), fields |
 
 The leaderboard and dashboard only offer fixed windows (1d/7d/30d/90d/all_time and 7d/30d/90d/all). For any other range, such as "the past 45 days", use `flowscan_builder_revenue`. Builder names are not unique on Flowscan (there are two "fomo" builders, and one's id is the other's name), so resolve names with `flowscan_builder_lookup` first and pass the `address` or `id:<id>`.
 
 ### Terminal (`/terminal`)
 
+The homepage used to show the perp positioning snapshot; since October 2026 it lives on `/terminal`.
+
 | Tool | Returns | Key params |
 | --- | --- | --- |
-| `flowscan_market_history` | The trading terminal's per-market history (`POST /terminal/api/market-history`, `shownOn` = `/terminal`). `kind: "funding"`: hourly funding rates (`fundingRate`, an hourly fraction; positive = longs pay shorts). `kind: "slippage"`: order-book slippage for a market buy and sell of `amount` and the half-spread, in bps from mid, about every 15 minutes. Rows newest first with `time`/`timeIso`. `summary` covers the whole range: count, `from`/`to`, latest values; funding: mean hourly rate, min/max, `annualizedMeanRate`/`annualizedMeanPct` (mean hourly x 24 x 365, simple) and `shareHoursPositive`; slippage: `latest` plus mean/median/max of buy slippage, sell slippage and half-spread. Works for HIP-3 markets; a bare symbol (`TSLA`) resolves to `xyz:TSLA` when unique, an ambiguous one (`SNDK`) is rejected with the prefixed candidates, an unknown one is a 404. | **`kind`** (`funding`, `slippage`), **`coin`** (case-insensitive), `range` (`1d` default, `7d`, `14d`), `amount` (slippage only: `10k`, `100k` default, `1m` USD), fields/limit/offset (default 100; 14 days is about 336 funding rows or 1,350 slippage rows) |
+| `flowscan_perp_markets` | Positioning snapshot for every perp market (about 340, including HIP-3 markets like `xyz:TSLA`): long/short counts and notional, ratios, open interest, average entry, median leverage, unique addresses, `snapshotIso`/`snapshotAgeSeconds`. | `market`, `sortBy` (default `openInterest`), `traderFilter`, fields/limit/offset (default 60) |
+| `flowscan_perp_positions` | "Positions" tab: open positions in one market, largest first: address with Flowscan `name` and trader `tag`, signed size, notional, side, entry, leverage, liquidation price, account value, funding PnL, all-time PnL, size change since the previous snapshot; `total`/`totalPages`, `snapshotIso`/`snapshotAgeSeconds`; `marketSummary` (whole market for the chosen cohort: long/short counts and notional, OI, median leverage, average entry) and `filteredSideSummary` (only the rows matching the filters, with the applied `filter`). A bare HIP-3 symbol (`TSLA`) resolves to `xyz:TSLA` when unique; otherwise the error lists candidates. | **`market`** (case-insensitive), `side`, `sort` (`notional` default, `size`, `entry`, `leverage`, `liq`, `allTimePnl`, `funding`, `sizeDelta`), `dir`, `minSize`/`maxSize`, `minNotional`/`maxNotional`, `minEntry`/`maxEntry`, `minLiq`/`maxLiq`, `minLeverage`/`maxLeverage`, `leverageType`, `address`, `traderFilter`, `minReturn`/`maxReturn`, `includeTags`, `markPx`, `limit` (default 50, max 200), `page` (1-based), fields |
+| `flowscan_address_perp_positions` | One address's open perp positions across all markets (including HIP-3) from the latest snapshot, sorted by notional, with `totalNotional` and `totalPositions`. | **`address`**, `market`, `side`, fields/limit/offset (default 50) |
+| `flowscan_market_history` | The trading terminal's per-market history (`POST /terminal/api/market-history`, `shownOn` = `/terminal`). `kind: "funding"`: hourly funding rates (`fundingRate`, an hourly fraction; positive = longs pay shorts). `kind: "slippage"`: order-book slippage for a market buy and sell of `amount` and the half-spread, in bps from mid, about every 15 minutes. Rows newest first with `time`/`timeIso`. `summary` covers the whole range: count, `from`/`to`, latest values; funding: mean hourly rate, min/max, `annualizedMeanRate`/`annualizedMeanPct` (mean hourly x 24 x 365, simple) and `shareHoursPositive`; slippage: `latest` plus mean/median/max of buy slippage, sell slippage and half-spread. `kind: "openInterest"`: open interest per candle (`oiOpen`/`oiHigh`/`oiLow`/`oiClose` in coins, `oiUsd`), the same two-sided basis as `openInterest` in the snapshot; summary: latest, first, change, min/max. Funding and slippage go back 14 days (the route caps rows), open interest one year. Works for HIP-3 markets; a bare symbol (`TSLA`) resolves to `xyz:TSLA` when unique, an ambiguous one (`SNDK`) is rejected with the prefixed candidates, an unknown one is a 404. | **`kind`** (`funding`, `slippage`, `openInterest`), **`coin`** (case-insensitive), `range` (`1d` default, `7d`, `14d`; `30d`, `90d`, `1y` for open interest), `interval` (open interest only, default by range), `amount` (slippage only: `10k`, `100k` default, `1m` USD), fields/limit/offset (default 100; 14 days is about 336 funding rows or 1,350 slippage rows) |
+| `flowscan_perp_market_detail` | "Distribution" tab and "Depth" chart for one market: summary, positions bucketed by leverage, size and account value (count and USD notional, long vs short), the largest positions with names, and liquidation clusters (USD that would be liquidated at each price) within `clusterRangePct` of the price, summed in `liquidationTotals`. `para:PAPER` adds the PAPER valuation panel (`/api/paper`). | **`market`**, `sections`, `whalesLimit` (20), `clusterRangePct` (15), `clustersLimit` (40), `includeTags`, fields |
+| `flowscan_position_changes` | "Changes" tab: positions opened, closed, increased, reduced or flipped since a baseline snapshot (`window`: `prev`, `1h`, `4h`, `24h`, `7d`), with names/tags; `summary` counts each kind and the long/short and buy/sell notional for the cohort and window. | **`market`**, `window`, `kind`, `side`, `traderFilter`, `address`, `sortBy`, `dir`, `limit` (50), `page`, `includeTags`, fields |
+| `flowscan_twaps` | "TWAPs" tab: TWAP orders running in one market with progress, start/end time and names; `summary` per side. | **`market`**, `side`, `includeTags`, fields/limit/offset (50) |
+| `flowscan_liquidations` | Liquidations. `view: "recent"`: latest events (all markets or one) with `summary` (count, long/short USD, largest, byMarket). `view: "history"`: USD liquidated per minute for one market (Flowscan keeps about 2-3 days). | `view`, `market` (required for history), `hours` (24), `side`, `minNotional`, `events` (120), `includeTags`, fields/limit/offset |
+| `flowscan_order_flow` | Chart order-flow indicators for about 100 markets: `kind: "footprint"` = taker buy/sell USD volume, delta, trades and point of control per candle (`includeLevels` for per-price rows); `kind: "flow"` = USD opened vs closed and realized PnL per candle. Up to 500 candles, newest first, with `totals`. | **`market`**, `kind`, `interval` (`1m`..`1h`, default `1h`), `bars` (24), `endTime`, `includeLevels`, fields |
+| `flowscan_terminal_status` | Snapshot time/age, baseline and history range, the trader cohorts, the markets and intervals with order-flow data, and active price-spike alerts. | `include` |
 
-The terminal's chart, order book and trades are the direct-mode tools `flowscan_candles`, `flowscan_order_book` and `flowscan_recent_trades`; its positions are the perp snapshot tools above.
+`traderFilter` picks the cohort the positioning panel shows: `all` (default here), `leaderboard` (top 10,000 accounts, the site's default), `pnl_30d`, `pnl_7d`, `pnl_all` (top 1,000 by PnL) or `winrate_30d` (top 1,000 by 30-day win rate).
+
+`openInterest` in the perp snapshot (and OI in the HIP-3 tools) is Flowscan's two-sided figure: long notional + short notional. That is twice the one-sided OI some other interfaces show. In direct mode, `flowscan_prices` returns Hyperliquid's own figure, which is on the same two-sided basis (`openInterestUsdTwoSided`, directly comparable), and `openInterestUsdOneSided` (half). Always say which one you quote. The homepage "24h Revenue" card is served by the revenue tools below.
+
+The terminal's chart, order book and trades are the direct-mode tools `flowscan_candles`, `flowscan_order_book` and `flowscan_recent_trades`; Live prices in the header also need direct mode (`flowscan_prices`).
 
 ### Builder Intelligence (`/builder-intelligence`)
 
@@ -392,18 +406,18 @@ In direct mode `flowscan_coverage` reports `mode: "hyperliquid-direct"` and list
 
 ## DEX names
 
-The `/hip-3` analytics use display names, while market symbols (`xyz:TSLA`), address data and deployer fees use the on-chain DEX prefix. Tools that take a `dex` (the HIP-3 tools, `flowscan_revenue_deployer_fees` and `flowscan_address_summary`) accept either form, case-insensitively. `flowscan_hip3_dex` and `flowscan_address_summary` reject an unknown name with an error that lists the valid ones; in the other tools an unknown name simply matches nothing.
+Since October 2026 the `/hip-3` page shows brand names (TradeXYZ, Kinetiq, ...), its data routes still use the older display names (XYZ, KM, ...), and market symbols (`xyz:TSLA`), address data and deployer fees use the on-chain DEX prefix. Tools that take a `dex` (the HIP-3 tools, `flowscan_revenue_deployer_fees` and `flowscan_address_summary`) accept any of the three, case-insensitively. An unknown name is an input error that lists the valid ones, in every tool that takes a `dex`.
 
-| Display name | On-chain prefix |
-| --- | --- |
-| XYZ | `xyz` |
-| FLX | `flx` |
-| Hyena | `hyna` |
-| KM | `mkts` (was `km` until 2026-06) |
-| VNTL | `vntl` |
-| Dreamcash | `cash` |
-| Paragon | `para` |
-| Entropy | `io` |
+| Brand name (page) | Display name (routes) | On-chain prefix |
+| --- | --- | --- |
+| TradeXYZ | XYZ | `xyz` |
+| Felix | FLX | `flx` |
+| HyENA | Hyena | `hyna` |
+| Kinetiq | KM | `mkts` (was `km` until 2026-06) |
+| Ventuals | VNTL | `vntl` |
+| Dreamcash | Dreamcash | `cash` |
+| Paragon | Paragon | `para` |
+| Entropy.io | Entropy | `io` |
 
 `flowscan_coverage` (`hip3DexNames`) and `flowscan_hip3_overview` (`dexAliases`) return the same table.
 
@@ -417,12 +431,13 @@ Several Flowscan routes return megabytes of JSON. Tool results are shaped so the
 {
   "source": "https://www.flowscan.xyz/api/perp-snapshot/markets",
   "network": "mainnet",
+  "servedAtIso": "2026-10-23T05:37:11.604Z",
   "paging": { "total": 330, "offset": 0, "limit": 60, "hasMore": true },
   "data": { "...": "..." }
 }
 ```
 
-`source` is the Flowscan route the data came from. For POST routes it is the route path only, without the request body (such as `{type: "hypercoreFeeSummary"}`). Some tools add other top-level keys such as `units`, `kind`, `window`, `capped`, `coveredRange`, `nextStartTime` or `note`. `flowscan_coverage` returns the coverage map directly, without the envelope.
+`source` is the Flowscan route the data came from (results built from several routes also list them in `sources`). `servedAtIso` is when the server built the result; the server may answer from its cache (20 seconds by default, 5 minutes for large slow-changing payloads), and the data's own time fields (`snapshotIso`, dates, `generatedAt`) say how old the data is. For POST routes it is the route path only, without the request body (such as `{type: "hypercoreFeeSummary"}`). Some tools add other top-level keys such as `units`, `kind`, `window`, `capped`, `coveredRange`, `nextStartTime` or `note`. `flowscan_coverage` returns the coverage map directly, without the envelope.
 
 The [Hyperliquid-direct tools](#hyperliquid-direct-tools-opt-in) use this envelope instead (illustrative block height, abridged):
 
@@ -468,7 +483,7 @@ Failures come back as an MCP tool error (`isError: true`) with this body:
 
 For the Hyperliquid-direct tools, `source` is the upstream host and `route` the URL plus request type, for example `"https://api.hyperliquid.xyz/info {type:candleSnapshot}"`. A 429 from Hyperliquid also has a `hint` with how long to wait; it is not retried. A block or transaction that does not exist is a 404 ("Block not found" / "Transaction not found").
 
-`status` is `null` for timeouts and network errors. `status` and `route` are both `null` for errors the server raises itself before calling Flowscan, such as an invalid date range, an unknown DEX name or an unknown validator. An unknown market in `flowscan_perp_positions` or `flowscan_market_history` is a 404 whose message lists candidate symbols.
+`status` is `null` for timeouts and network errors. `status` and `route` are both `null`, and `source` is `"input validation"`, for errors the server raises itself before calling Flowscan, such as an invalid date range, an unknown DEX name, an unknown validator, or arguments that do not match the tool's schema (wrong type, value out of range, unknown enum value; these also carry a `hint`). An unknown market in `flowscan_perp_positions` or `flowscan_market_history` is a 404 whose message lists candidate symbols.
 
 Only transient failures are retried, up to twice with backoff: HTTP 429, HTTP 5xx, timeouts and network errors. HTTP 400/404 and the deterministic HTTP 500 that Flowscan's address route returns for a malformed query (body containing "Check your request body") are returned immediately.
 
@@ -505,7 +520,8 @@ Some prices are available in strict mode because Flowscan serves them: entry and
 
 ### Not covered in either mode
 
-- Flowscan's hard-coded address label book (the names the site shows for known addresses).
+- The `/terminal` L4 order book (orders by address). The page streams it from a third-party host (api.flossington.com) with a token; this server does not contact that host.
+- Saved addresses and custom names in the search box (kept in your browser).
 - Live streaming updates. The WebSocket tools return a snapshot (or what arrived during a few seconds), not a continuous stream.
 - Testnet. Flowscan only shows Hyperliquid mainnet, so every result is mainnet.
 - Any write action. All tools are read-only; nothing places orders or moves funds.
@@ -513,7 +529,7 @@ Some prices are available in strict mode because Flowscan serves them: entry and
 ## Dates and windows
 
 - All days are UTC.
-- `days: N` means the last N complete UTC days, ending yesterday, in the revenue series tools (`flowscan_revenue_hypercore_fees`, `_deployer_fees`, `_priority_gas`) and `flowscan_builder_revenue`. The `flowscan_revenue_summary` windows, the `flowscan_builders_daily_revenue` default range and the `flowscan_builder_dashboard` windows also end yesterday. Today's partial row is only added to the revenue series with `includeToday: true` (or an explicit range that reaches today), and is flagged `partial: true`.
+- `days: N` means the last N complete UTC days, ending yesterday, in the revenue series tools (`flowscan_revenue_hypercore_fees`, `_deployer_fees`, `_priority_gas`) and `flowscan_builder_revenue`. The `flowscan_revenue_summary` windows, the `flowscan_builders_daily_revenue` default range and the `flowscan_builder_dashboard` stats, daily and assets windows also end yesterday (its top-users window has no reported dates). Today's partial row is only added to the revenue series with `includeToday: true` (or an explicit range that reaches today), and is flagged `partial: true`.
 - The HIP-3 series (`flowscan_hip3_daily`, `flowscan_hip3_dex`) end at Flowscan's latest date, which can be today; `lastDayPartial` and the row's `partial` flag say so.
 - Builder date ranges are checked before any request: a start date in the future, or after the end date, is an error, and an end date of today or later is clamped to yesterday with a note.
 - Results state the range they cover (`rangeTotals`, `range`, `windows[].from`/`to`, `coveredRange`). Quote it with the figure.

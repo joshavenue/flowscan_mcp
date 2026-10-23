@@ -191,7 +191,7 @@ test("HTTP stateless: SDK client lists tools, calls a tool, reads the guide; GET
   const srv = await startHttpServer({ port: 0, host: "127.0.0.1", log: () => {} });
   try {
     const { client, tools, cov, prompt } = await viaHttp(srv.url);
-    assert.equal(tools.length, 45);
+    assert.equal(tools.length, 54);
     assert.equal(cov.servedByThisServer, true);
     assert.equal((prompt.messages[0].content as any).text, GUIDE_MD);
     assert.equal((client.transport as StreamableHTTPClientTransport).sessionId, undefined, "stateless: no session id");
@@ -199,7 +199,7 @@ test("HTTP stateless: SDK client lists tools, calls a tool, reads the guide; GET
 
     const base = srv.url.replace(/\/mcp$/, "");
     const health = await (await fetch(`${base}/healthz`)).json();
-    assert.deepEqual([health.ok, health.mode, health.tools, health.stateful], [true, "strict", 45, false]);
+    assert.deepEqual([health.ok, health.mode, health.tools, health.stateful], [true, "strict", 54, false]);
     assert.equal((await fetch(srv.url)).status, 405);
     assert.equal(await rawGet(srv.port, "/healthz", { Host: "evil.example" }), 403);
     assert.equal(await rawGet(srv.port, "/healthz", { Host: `localhost:${srv.port}` }), 200);
@@ -219,7 +219,7 @@ test("HTTP stateful sessions, CORS allowlist and legacy SSE", async () => {
   const srv = await startHttpServer({ port: 0, host: "127.0.0.1", stateful: true, corsOrigins: ["https://app.example"], log: () => {} });
   try {
     const { client, tools } = await viaHttp(srv.url);
-    assert.equal(tools.length, 59);
+    assert.equal(tools.length, 68);
     const t = client.transport as StreamableHTTPClientTransport;
     assert.match(t.sessionId ?? "", /^[0-9a-f-]{36}$/);
     await t.terminateSession();
@@ -233,7 +233,7 @@ test("HTTP stateful sessions, CORS allowlist and legacy SSE", async () => {
     assert.equal(noSession.status, 400);
 
     const sse = await viaHttp(srv.url.replace(/\/mcp$/, "/sse"), "sse");
-    assert.equal(sse.tools.length, 59);
+    assert.equal(sse.tools.length, 68);
     await sse.client.close();
   } finally {
     await srv.close();

@@ -154,8 +154,13 @@ export function registerNetworkTools(server: McpServer): void {
       const v = await resolveValidator(args.validator);
       if (v.status !== "resolved") return validatorProblem(args.validator, v);
       const data = await post("/api/staking/info", { type: "stakingEvents", validator: v.address, limit: args.limit ?? 50 });
-      const rows = Array.isArray(data) ? (data as Rec[]).map((e) => ({ ...e, timeIso: isoOf(e.time) })) : data;
-      return result(Array.isArray(rows) ? envelopeRows("/api/staking/info", rows, args.fields, { validator: v.address }) : envelope("/api/staking/info", pick(rows, args.fields), { validator: v.address }));
+      // The route labels every row currency "USDC", but staking moves HYPE (the /validators page shows HYPE).
+      const rows = Array.isArray(data) ? (data as Rec[]).map(({ amount, currency: _c, ...e }) => ({ ...e, amountHype: amount, timeIso: isoOf(e.time) })) : data;
+      return result(
+        Array.isArray(rows)
+          ? envelopeRows("/api/staking/info", rows, args.fields, { validator: v.address, note: "amountHype is in HYPE (Flowscan's route labels it USDC; the /validators page shows HYPE). isUndelegate=true means an undelegation." })
+          : envelope("/api/staking/info", pick(rows, args.fields), { validator: v.address }),
+      );
     },
   );
 }
