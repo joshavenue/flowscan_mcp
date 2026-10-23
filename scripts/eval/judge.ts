@@ -19,6 +19,9 @@ const runId = opt("run-id")!;
 if (!runId) throw new Error("--run-id required");
 const concurrency = Number(opt("concurrency", "4"));
 const model = opt("model", "opus")!;
+/** Same neutral, empty working directory as run.ts (no CLAUDE.md leaks into the judge). */
+const NEUTRAL_CWD = opt("cwd", "/tmp/eval-cwd")!;
+fs.mkdirSync(NEUTRAL_CWD, { recursive: true });
 const only = opt("only")?.split(",");
 const force = args.includes("--force");
 const outDir = path.join(EVAL_DIR, "results", runId);
@@ -96,7 +99,7 @@ function runJudge(prompt: string): Promise<{ code: number | null; stdout: string
   return new Promise((resolve) => {
     const t0 = Date.now();
     const child = spawn("timeout", ["300", "claude", "-p", "--model", model, "--output-format", "json", "--tools", "", "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence", "--max-turns", "2"], {
-      cwd: "/tmp/eval-cwd",
+      cwd: NEUTRAL_CWD,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";

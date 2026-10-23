@@ -38,7 +38,7 @@ npx tsx scripts/eval/judge.ts --run-id full --concurrency 4       # ~$10
 npx tsx scripts/eval/report.ts --run-id full                      # -> results/full/REPORT.md
 ```
 
-Useful flags. `run.ts`: `--only b01,q12`, `--category builders`, `--resume` (skip ids already recorded in the run dir), `--model`, `--max-turns` (default 10), `--timeout` (seconds, default 180), `--cwd`. `judge.ts`: `--only ids --force` to re-judge, `--model` (default opus). Both are resumable.
+Useful flags. `run.ts`: `--only b01,q12`, `--category builders`, `--resume` (skip ids already recorded in the run dir), `--model`, `--max-turns` (default 10), `--timeout` (seconds, default 180), `--cwd`. `judge.ts`: `--only ids --force` to re-judge, `--model` (default opus), `--cwd`. Both spawn `timeout`; on macOS install GNU coreutils (`brew install coreutils`, which provides `gtimeout`/`timeout`) or put a `timeout` wrapper on PATH. Both are resumable.
 
 ### Re-running a subset after a fix
 

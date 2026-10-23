@@ -188,7 +188,7 @@ export function registerHip4Tools(server: McpServer): void {
         ...(known === false ? { found: false, notFoundNote: `Outcome ${args.outcomeId} is not among the active outcomes or the latest 1000 settled ones, and Flowscan returned no data for it. Check the id with flowscan_hip4_markets.` } : {}),
         ...(known === true ? { found: true, emptyNote: "The outcome exists but has no candles or trade stats in this window (settled outcomes usually have none; pass settled=true for the settlement record)." } : {}),
       };
-      return result(envelope(route, pick(out, args.fields)));
+      return result(envelope(route, pick(out, args.fields), known === null ? {} : { sources: [`https://www.flowscan.xyz${route}`, "https://www.flowscan.xyz/api/hip-4"] }));
     },
   );
 
