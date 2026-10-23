@@ -3,13 +3,16 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { get, LONG_TTL_MS } from "../client.js";
 import { defineTool } from "../register.js";
 import { envelope, matches, page, pick, result, shapeInput, todayUtc } from "../shape.js";
-import { dexAliasTable, findDex, KNOWN_DEX_HELP } from "../dex.js";
+import { DEX_ALIASES, dexAliasTable, findDex, KNOWN_DEX_HELP } from "../dex.js";
 
 type Rec = Record<string, unknown>;
 
 const snapshot = () => get("/api/dex-stats/snapshot", {}, { ttlMs: LONG_TTL_MS }) as Promise<Rec>;
 const perDex = () => get("/api/dex-stats/per-dex", {}, { ttlMs: LONG_TTL_MS }) as Promise<Rec>;
 const buildersStats = () => get("/api/dex-stats/builders", {}, { ttlMs: LONG_TTL_MS }) as Promise<Rec>;
+
+/** Lowercase dex-stats display names, to tell DEX keys from other keys in mixed objects. */
+const DEX_KEYS = new Set(DEX_ALIASES.map((d) => d.name.toLowerCase()));
 
 /** Map an on-chain prefix ('mkts') or display name ('km') to the dex-stats display name ('KM'). */
 function dexName(input: string | undefined): string | undefined {
@@ -156,8 +159,30 @@ export function registerHip3Tools(server: McpServer): void {
           const n = args.days ?? 30;
           comp.history = trimNested(h, n);
         }
-        const mappings = ((markets.canonical_mappings as Rec) ?? {})[keyName ?? args.symbol] ?? null;
-        return result(envelope("/api/dex-stats/snapshot", pick({ symbol: keyName ?? args.symbol, listedAs: mappings, comparison: comp }, args.fields)));
+        let mappings = ((markets.canonical_mappings as Rec) ?? {})[keyName ?? args.symbol] ?? null;
+        if (args.dex) {
+          // keep only the requested DEX in every DEX-keyed part of the comparison
+          const dn = dexName(args.dex);
+          if (!findDex(args.dex)) throw new Error(`Unknown DEX '${args.dex}'. Known: ${KNOWN_DEX_HELP}.`);
+          const same = (k: string) => k.toLowerCase() === String(dn).toLowerCase();
+          if (Array.isArray(mappings)) mappings = (mappings as Rec[]).filter((m) => same(String(m.dex)));
+          if (comp) {
+            for (const [k, v] of Object.entries(comp)) {
+              if (v && typeof v === "object" && !Array.isArray(v)) {
+                const keys = Object.keys(v as Rec);
+                if (keys.some(same)) comp[k] = Object.fromEntries(Object.entries(v as Rec).filter(([kk]) => same(kk) || !DEX_KEYS.has(kk.toLowerCase())));
+                else if (k === "history") comp[k] = Object.fromEntries(Object.entries(v as Rec).map(([m, vv]) => [m, vv && typeof vv === "object" && !Array.isArray(vv) ? Object.fromEntries(Object.entries(vv as Rec).filter(([kk]) => same(kk) || !DEX_KEYS.has(kk.toLowerCase()))) : vv]));
+              }
+            }
+          }
+        }
+        const missing = comp
+          ? {}
+          : {
+              comparisonSymbols: Object.keys(comps).sort(),
+              comparisonNote: `Flowscan's cross-DEX comparison currently covers ${Object.keys(comps).length} symbols and '${args.symbol}' is not one of them (the list changes when Flowscan regenerates it). For live positioning use flowscan_perp_markets with the prefixed market (e.g. 'xyz:${String(args.symbol).toUpperCase()}'); for HIP-3 vs Binance use flowscan_hip3_binance_comparison.`,
+            };
+        return result(envelope("/api/dex-stats/snapshot", pick({ symbol: keyName ?? args.symbol, ...(args.dex ? { dex: dexName(args.dex) } : {}), listedAs: mappings, comparison: comp, ...missing }, args.fields)));
       }
       const wantDex = dexName(args.dex);
       const all = ((markets.all as Rec[]) ?? []).filter((m) => (!wantDex || String(m.dex).toLowerCase() === wantDex.toLowerCase()) && (!args.assetClass || m.asset_class === args.assetClass) && (matches(m.symbol, args.search) || matches(m.canonical, args.search)));
@@ -269,7 +294,16 @@ export function registerHip3Tools(server: McpServer): void {
         const comps = (snap.market_comparisons as Rec) ?? {};
         const compKey = Object.keys(comps).find((k) => k.toLowerCase() === (key ?? args.symbol!).toLowerCase());
         const hip3 = compKey ? ((comps[compKey] as Rec).dexes ?? null) : null;
-        const out = { generatedAt: d.generatedAt, symbol: key ?? args.symbol, found: Boolean(key), binance: key ? symbols[key] : null, binanceHistory: history, hip3ByDex: hip3 };
+        const out = {
+          generatedAt: d.generatedAt,
+          symbol: key ?? args.symbol,
+          found: Boolean(key),
+          binance: key ? symbols[key] : null,
+          binanceHistory: history,
+          hip3ByDex: hip3,
+          ...(!key ? { note: `'${args.symbol}' is not in Flowscan's Binance comparison list; call without symbol to list the ~240 symbols.` } : {}),
+          ...(key && !hip3 ? { hip3Note: `Flowscan's HIP-3 cross-DEX comparison does not include '${key}' right now (it covers ${Object.keys(comps).length} symbols), so hip3ByDex is null. Live HIP-3 positioning: flowscan_perp_markets with market 'xyz:${key}'.` } : {}),
+        };
         return result(envelope("/api/binance-rwa/comparison", pick(out, args.fields), { units: "oi, volume24h and history values in USD" }));
       }
       const sortKey = args.sortBy ?? "oi";

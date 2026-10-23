@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { getCoverage } from "./coverage.js";
 import { GUIDE_DESCRIPTION, GUIDE_MD } from "./guide.js";
 import { rawSchemasRequested, sanitizeInputSchema } from "./sanitize.js";
@@ -43,11 +43,12 @@ export function serverInstructions(direct: boolean): string {
  * without reimplementing it. Argument validation still uses the zod schemas.
  */
 function installPortableToolList(server: McpServer): void {
-  if (rawSchemasRequested()) return;
+  const raw = rawSchemasRequested();
   const inner = server.server;
   const original = inner.setRequestHandler.bind(inner);
   inner.setRequestHandler = ((schema: unknown, handler: (...a: any[]) => unknown) => {
-    if (schema !== ListToolsRequestSchema) return original(schema as any, handler as any);
+    if (schema === CallToolRequestSchema) return original(CallToolRequestSchema, (async (req: any, extra: any) => jsonValidationErrors(await handler(req, extra))) as any);
+    if (schema !== ListToolsRequestSchema || raw) return original(schema as any, handler as any);
     return original(ListToolsRequestSchema, async (req: any, extra: any) => {
       const res = (await handler(req, extra)) as { tools: Array<{ inputSchema: unknown; execution?: unknown; _meta?: unknown }> };
       return {
@@ -59,6 +60,20 @@ function installPortableToolList(server: McpServer): void {
       };
     });
   }) as typeof inner.setRequestHandler;
+}
+
+/**
+ * The SDK checks arguments against the zod schema before our handler runs and answers a bad
+ * call with plain text ("MCP error -32602: Input validation error: ..."). Rewrite that into the
+ * same JSON error shape every tool uses, so a model can always parse an error.
+ */
+export function jsonValidationErrors(res: unknown): unknown {
+  const r = res as { isError?: boolean; content?: Array<{ type: string; text?: string }> };
+  const text = r?.isError && r.content?.length === 1 && r.content[0].type === "text" ? (r.content[0].text ?? "") : "";
+  const m = text.match(/^MCP error -32602: (?:Input validation error: )?(?:Invalid arguments for tool (\S+): )?([\s\S]*)$/);
+  if (!m) return res;
+  const error = `Invalid arguments${m[1] ? ` for ${m[1]}` : ""}: ${m[2].trim()}`;
+  return { ...r, content: [{ type: "text", text: JSON.stringify({ error, status: null, route: null, source: "input validation", hint: "Fix the arguments (see the tool's input schema) and call again." }) }] };
 }
 
 export function createServer(): McpServer {

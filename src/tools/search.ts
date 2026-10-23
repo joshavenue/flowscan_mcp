@@ -35,7 +35,7 @@ export function registerSearchTools(server: McpServer): void {
         "Flowscan's names for known addresses (funds, market makers, deployers, bridges, HLP vaults, team wallets) and trader tags (style scalper..position/market maker/new wallet; level very profitable..very unprofitable; net PnL since Aug 2025; delta neutral). Pass `addresses` (max 100) to label them, or `search` to find addresses by name ('Wintermute', 'HLP'). Unknown = name null.",
       inputSchema: {
         addresses: z.array(z.string().regex(ADDRESS, "Expected 0x + 40 hex characters")).min(1).max(100).optional().describe("Addresses to label (0x + 40 hex)."),
-        search: z.string().min(2).optional().describe("Name or address substring to search for."),
+        search: z.string().trim().min(2).optional().describe("Name or address substring to search for."),
         limit: z.number().int().min(1).max(200).optional().describe("search: max matches (default 20)."),
         fields: shapeInput.fields,
       },
@@ -66,7 +66,7 @@ export function registerSearchTools(server: McpServer): void {
       description:
         "Flowscan's search box: say what any query is and which tool to call next. Address (label/tag, builder? validator?), tx hash, block number, HIP-4 asset id ('#14730'), perp/HIP-3 market ('TSLA'), tokenized stock ('NVDAX'), HIP-3 DEX ('Kinetiq'), builder, validator, named wallet or HIP-4 market. Use it when unsure what an identifier is.",
       inputSchema: {
-        query: z.string().min(1).max(200).describe("Anything: 0x address, tx hash, block number, symbol, name."),
+        query: z.string().trim().min(1).max(200).describe("Anything: 0x address, tx hash, block number, symbol, name."),
         limit: z.number().int().min(1).max(20).optional().describe("Max matches per group (default 5)."),
       },
       openWorld: true,
@@ -107,6 +107,7 @@ export function registerSearchTools(server: McpServer): void {
         );
       }
       if (/^#\d+$/.test(q)) {
+        if (!/[01]$/.test(q)) return result(envelope("/api/hip-4/labels", { query: q, type: "unknown", next: ["HIP-4 asset ids end in 0 (YES) or 1 (NO), e.g. '#14730'. This one does not; check the id."] }));
         const id = Number(q.slice(1));
         return result(envelope("/api/hip-4/labels", { query: q, type: "HIP-4 outcome asset id", outcomeId: Math.floor(id / 10), side: id % 10 === 0 ? "YES" : "NO", next: [`flowscan_hip4_labels {assets: ["${q}"]} for its label`, `flowscan_hip4_outcome {outcomeId: ${Math.floor(id / 10)}} for candles`] }));
       }

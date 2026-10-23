@@ -38,6 +38,12 @@ function resolveRange(args: { days?: number; startDate?: string; endDate?: strin
   return { startDate, endDate, notes };
 }
 
+/** Builder Intelligence takes optional startDate/endDate; reject impossible ranges before the ~10 MB request. */
+function checkIntelRange(args: { startDate?: string; endDate?: string }): void {
+  if (args.startDate && args.endDate && args.startDate > args.endDate) throw new Error(`startDate ${args.startDate} is after endDate ${args.endDate}.`);
+  if (args.startDate && args.startDate > daysAgo(0)) throw new Error(`startDate ${args.startDate} is in the future.`);
+}
+
 /** Inclusive list of YYYY-MM-DD dates. */
 const dateRange = (start: string, end: string): string[] => {
   const out: string[] = [];
@@ -530,7 +536,21 @@ export function registerBuilderTools(server: McpServer): void {
         const lim = args.assetsLimit ?? 40;
         out.volumeByAsset = { ...(assets as Rec), assetCount: list.length, assets: list.slice(0, lim) };
       }
-      return result(envelope("/api/dashboard/builder-stats", pick(out, args.fields), { window: q.window, ...(resolved ? { resolvedBuilder: resolved } : {}) }));
+      const routes = [
+        ...(stats ? ["/api/dashboard/builder-stats"] : []),
+        ...(daily ? ["/api/dashboard/builder-daily-series"] : []),
+        ...(assets ? ["/api/dashboard/builder-volume-by-asset"] : []),
+        ...(top ? ["/api/hydromancer/builder-top-users"] : []),
+      ];
+      return result(
+        envelope(routes[0], pick(out, args.fields), {
+          ...(routes.length > 1 ? { sources: routes.map((r) => `https://www.flowscan.xyz${r}`) } : {}),
+          window: q.window,
+          windowNote: q.window === "all" ? "all time up to the latest Flowscan update" : `the last ${q.window} as Flowscan computes it (complete UTC days ending yesterday for stats/daily/assets)`,
+          builder: address,
+          ...(resolved ? { resolvedBuilder: resolved } : {}),
+        }),
+      );
     },
   );
 
@@ -577,6 +597,7 @@ export function registerBuilderTools(server: McpServer): void {
       },
     },
     async (args) => {
+      checkIntelRange(args);
       // The route is case-insensitive; normalising keeps one cache entry per builder (payloads are ~10 MB+).
       const id = String(args.builderId).trim().replace(/^id:/i, "").toLowerCase();
       const route = `/api/intelligence/builders/${encodeURIComponent(id)}`;
@@ -624,6 +645,7 @@ export function registerBuilderTools(server: McpServer): void {
       },
     },
     async (args) => {
+      checkIntelRange(args);
       const cat = (args.category ?? "overall").toLowerCase();
       const route = `/api/intelligence/summary/${encodeURIComponent(cat)}`;
       const d = (await get(route, { startDate: args.startDate, endDate: args.endDate }, { ttlMs: LONG_TTL_MS })) as Rec;

@@ -267,6 +267,8 @@ export function registerAddressTools(server: McpServer): void {
     },
     async (args) => {
       const agg = args.aggregateByTime ?? true;
+      if (args.endTime !== undefined && args.startTime === undefined) throw new Error("endTime needs startTime (Unix ms). Without startTime the tool returns the latest ~2000 fills.");
+      if (args.startTime !== undefined && args.endTime !== undefined && args.startTime > args.endTime) throw new Error("startTime is after endTime.");
       const ranged = args.startTime !== undefined;
       let all: Rec[];
       let windowMeta: Rec;
@@ -327,6 +329,7 @@ export function registerAddressTools(server: McpServer): void {
     async (args) => {
       const kind = args.kind ?? "ledger";
       const startTime = args.startTime ?? Date.now() - (kind === "funding" ? 7 : 30) * DAY;
+      if (args.endTime !== undefined && startTime > args.endTime) throw new Error(`startTime (${new Date(startTime).toISOString()}${args.startTime === undefined ? ", the default" : ""}) is after endTime; pass an earlier startTime.`);
       const addr = args.address.toLowerCase();
       const w = await fetchWindow(kind === "funding" ? "userFunding" : "userNonFundingLedgerUpdates", args.address, startTime, args.endTime, {}, args.maxPages ?? 5, (r) =>
         `${r.time}:${r.hash}:${JSON.stringify(r.delta)}`,

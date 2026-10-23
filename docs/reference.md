@@ -4,7 +4,7 @@ The complete reference for every tool, parameter, output field and setting. For 
 
 An MCP server that exposes the data shown on [flowscan.xyz](https://www.flowscan.xyz) as tools for AI agents. Flowscan is a real-time explorer and analytics site for the Hyperliquid blockchain (HyperCore, HIP-3 perp DEXs and HIP-4 outcome markets). It is not related to the Flow blockchain. With this server an agent can answer questions such as "what did Hyperliquid earn in fees yesterday", "who holds the largest BTC longs", "which builder code earned the most this week" or "what positions does 0x... have open", using the same numbers a person would see on the site.
 
-- 45 read-only tools, grouped by Flowscan page; 59 with the opt-in [Hyperliquid-direct mode](#two-modes)
+- 54 read-only tools, grouped by Flowscan page; 68 with the opt-in [Hyperliquid-direct mode](#two-modes)
 - Hyperliquid mainnet only (Flowscan has no testnet mode)
 - No API key
 - stdio transport by default, Streamable HTTP with `--http` ([Remote (HTTP) and Docker](#remote-http-and-docker)); Node.js 20 or newer (22 or newer for the three WebSocket tools of direct mode)
@@ -20,10 +20,10 @@ The server has two modes. The default is strict; the second is opt-in.
 | | Strict (default) | Hyperliquid-direct (opt-in) |
 | --- | --- | --- |
 | Enable | nothing to set | `FLOWSCAN_HYPERLIQUID_DIRECT=1` (or `true`) in the server's environment |
-| Tools | 45 | 59: the same 45 plus 14 [Hyperliquid-direct tools](#hyperliquid-direct-tools-opt-in) |
+| Tools | 54 | 68: the same 54 plus 14 [Hyperliquid-direct tools](#hyperliquid-direct-tools-opt-in) |
 | Hosts contacted | only `https://www.flowscan.xyz` | `www.flowscan.xyz` plus exactly `api.hyperliquid.xyz`, `rpc.hyperliquid.xyz`, `api-ui.hyperliquid.xyz` and `api.hyperunit.xyz` (HTTPS, and WSS to the two Hyperliquid WebSocket endpoints) |
 | Adds | | block and transaction lookups, the live block/tx feed, prices, candles, order books, recent trades, spot token directory, perp DEX list, validator APR/uptime, borrow/lend APYs, and the address page's portfolio chart, HyperEVM balance and Unit bridge operations |
-| Tool list size (JSON schemas the client loads) | about 57,300 characters | about 71,100 characters |
+| Tool list size (JSON schemas the client loads) | about 73,000 characters | about 86,500 characters |
 
 The tool list is loaded into the model's context, so direct mode costs roughly a quarter more context on every conversation. Enable it only if you need the extra panels.
 
@@ -127,7 +127,7 @@ To share it with a project, commit a `.mcp.json` at the project root with the sa
 }
 ```
 
-Cursor users have reported a cap of 40 MCP tools across all servers; strict mode has 45. If you hit it, see [Limiting the tool list](clients.md#limiting-the-tool-list).
+Cursor users have reported a cap of 40 MCP tools across all servers; strict mode has 54. If you hit it, see [Limiting the tool list](clients.md#limiting-the-tool-list).
 
 ### Codex
 
@@ -198,7 +198,7 @@ Clients that connect to a URL instead of starting a process (ChatGPT, the OpenAI
 
 ```sh
 npx -y github:joshavenue/flowscan_mcp --http     # MCP endpoint: http://127.0.0.1:8787/mcp
-curl http://127.0.0.1:8787/healthz                # {"ok":true,"mode":"strict","tools":45,...}
+curl http://127.0.0.1:8787/healthz                # {"ok":true,"mode":"strict","tools":54,...}
 ```
 
 `--port <n>` and `--host <addr>` (or `PORT`, `HOST`, `FLOWSCAN_MCP_TRANSPORT=http`) change the defaults. The server is stateless by default (`--stateful` keeps `Mcp-Session-Id` sessions) and also serves the legacy HTTP+SSE transport on `/sse` for older clients. It has no authentication: it binds `127.0.0.1` and accepts only local `Host` headers unless `FLOWSCAN_MCP_ALLOWED_HOSTS` names more, and refuses browser origins not listed in `FLOWSCAN_MCP_CORS`.
@@ -431,12 +431,13 @@ Several Flowscan routes return megabytes of JSON. Tool results are shaped so the
 {
   "source": "https://www.flowscan.xyz/api/perp-snapshot/markets",
   "network": "mainnet",
+  "servedAtIso": "2026-10-23T05:37:11.604Z",
   "paging": { "total": 330, "offset": 0, "limit": 60, "hasMore": true },
   "data": { "...": "..." }
 }
 ```
 
-`source` is the Flowscan route the data came from. For POST routes it is the route path only, without the request body (such as `{type: "hypercoreFeeSummary"}`). Some tools add other top-level keys such as `units`, `kind`, `window`, `capped`, `coveredRange`, `nextStartTime` or `note`. `flowscan_coverage` returns the coverage map directly, without the envelope.
+`source` is the Flowscan route the data came from (results built from several routes also list them in `sources`). `servedAtIso` is when the server built the result; the server may answer from its cache (20 seconds by default, 5 minutes for large slow-changing payloads), and the data's own time fields (`snapshotIso`, dates, `generatedAt`) say how old the data is. For POST routes it is the route path only, without the request body (such as `{type: "hypercoreFeeSummary"}`). Some tools add other top-level keys such as `units`, `kind`, `window`, `capped`, `coveredRange`, `nextStartTime` or `note`. `flowscan_coverage` returns the coverage map directly, without the envelope.
 
 The [Hyperliquid-direct tools](#hyperliquid-direct-tools-opt-in) use this envelope instead (illustrative block height, abridged):
 
@@ -482,7 +483,7 @@ Failures come back as an MCP tool error (`isError: true`) with this body:
 
 For the Hyperliquid-direct tools, `source` is the upstream host and `route` the URL plus request type, for example `"https://api.hyperliquid.xyz/info {type:candleSnapshot}"`. A 429 from Hyperliquid also has a `hint` with how long to wait; it is not retried. A block or transaction that does not exist is a 404 ("Block not found" / "Transaction not found").
 
-`status` is `null` for timeouts and network errors. `status` and `route` are both `null` for errors the server raises itself before calling Flowscan, such as an invalid date range, an unknown DEX name or an unknown validator. An unknown market in `flowscan_perp_positions` or `flowscan_market_history` is a 404 whose message lists candidate symbols.
+`status` is `null` for timeouts and network errors. `status` and `route` are both `null`, and `source` is `"input validation"`, for errors the server raises itself before calling Flowscan, such as an invalid date range, an unknown DEX name, an unknown validator, or arguments that do not match the tool's schema (wrong type, value out of range, unknown enum value; these also carry a `hint`). An unknown market in `flowscan_perp_positions` or `flowscan_market_history` is a 404 whose message lists candidate symbols.
 
 Only transient failures are retried, up to twice with backoff: HTTP 429, HTTP 5xx, timeouts and network errors. HTTP 400/404 and the deterministic HTTP 500 that Flowscan's address route returns for a malformed query (body containing "Check your request body") are returned immediately.
 

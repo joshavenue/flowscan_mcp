@@ -275,7 +275,12 @@ const scenarios: Scenario[] = [
       c.must("perp snapshot and dex-stats OI agree within 3%", snapOi && dexOi && rel(snapOi, dexOi) < 0.03, { snapOi, dexOi });
       const pmDesc = String((await c.h.listTools()).find((t) => t.name === "flowscan_perp_markets")?.description ?? "");
       c.should("OI convention documented (Flowscan openInterest = long + short notional)", /long.?\+.?short|both sides|two-sided|2x/i.test(pm.text + pmDesc), "no note in output or description");
-      const hm = await c.call("flowscan_hip3_markets", { symbol: "TSLA", days: 2 });
+      // Flowscan regenerates its comparison list; TSLA is not always in it, so fall back to a compared symbol.
+      let hm = await c.call("flowscan_hip3_markets", { symbol: "TSLA", days: 2 });
+      if (!hm.json?.data?.comparison && hm.json?.data?.comparisonSymbols?.length) {
+        c.should("missing TSLA comparison is explained", Boolean(hm.json?.data?.comparisonNote));
+        hm = await c.call("flowscan_hip3_markets", { symbol: hm.json.data.comparisonSymbols[0], days: 2 });
+      }
       const hist = hm.json?.data?.comparison?.history ?? {};
       const lens: number[] = [];
       for (const v of Object.values(hist)) {

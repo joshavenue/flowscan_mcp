@@ -130,3 +130,15 @@ test("live feed: parses the homepage's message shapes, de-duplicates, sorts newe
     globalThis.WebSocket = realWs;
   }
 });
+
+test("SDK argument-validation errors are rewritten into the JSON error shape", async () => {
+  const { jsonValidationErrors } = await import("../src/server.js");
+  const sdk = { isError: true, content: [{ type: "text", text: "MCP error -32602: Input validation error: Invalid arguments for tool flowscan_search: Too small: expected string to have >=1 characters at query" }] };
+  const out = jsonValidationErrors(sdk) as { isError: boolean; content: Array<{ text: string }> };
+  assert.equal(out.isError, true);
+  const body = JSON.parse(out.content[0].text);
+  assert.deepEqual([body.status, body.route, body.source], [null, null, "input validation"]);
+  assert.match(body.error, /^Invalid arguments for flowscan_search: Too small/);
+  const ok = { content: [{ type: "text", text: "{}" }] };
+  assert.equal(jsonValidationErrors(ok), ok);
+});

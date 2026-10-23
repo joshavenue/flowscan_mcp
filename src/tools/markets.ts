@@ -238,6 +238,7 @@ export function registerMarketTools(server: McpServer): void {
       const rc = await resolveCoin(args.coin);
       const sub: Rec = { type: "l2Book", coin: rc.coin };
       if (args.nSigFigs) sub.nSigFigs = args.nSigFigs;
+      if (args.mantissa !== undefined && args.nSigFigs !== 5) throw new Error("mantissa only applies with nSigFigs=5.");
       if (args.mantissa && args.nSigFigs === 5) sub.mantissa = args.mantissa;
       const { data } = await wsSnapshot(sub, "l2Book", rc.coin);
       const d = data as { coin: string; time: number; levels: Rec[][] };

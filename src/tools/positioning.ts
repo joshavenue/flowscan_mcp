@@ -25,7 +25,7 @@ export function registerPositioningTools(server: McpServer): void {
     {
       title: "One perp market: distributions, whales, liquidation clusters (/terminal)",
       description:
-        "/terminal 'Distribution' tab and 'Depth' chart for ONE market (all accounts): summary (long/short counts and USD notional, two-sided OI, median leverage), positions bucketed by leverage, size and account value (count and USD notional, long vs short), the largest positions (whales, named) and liquidation clusters (USD that would be liquidated at each price; pctFromCurrent < 0 = below price, where longs liquidate), limited to clusterRangePct and summed in liquidationTotals. para:PAPER adds the PAPER valuation panel.",
+        "/terminal 'Distribution' tab and 'Depth' chart for ONE market (all accounts): summary (long/short counts and USD notional, two-sided OI, median leverage), positions bucketed by leverage, size and account value (count and USD notional, long vs short), the largest positions (whales, named) and liquidation clusters (USD that would be liquidated at each price; pctFromCurrent < 0 = below price, where longs liquidate), limited to clusterRangePct and summed in liquidationTotals. 'para:PAPER' adds the PAPER valuation panel (alone if PAPER is not in the snapshot).",
       inputSchema: {
         market: z.string().min(1).describe("Market, e.g. 'BTC', 'xyz:TSLA' (case-insensitive; bare 'TSLA' resolves when unique)."),
         sections: z.array(z.enum(DETAIL_SECTIONS)).optional().describe("Sections to return (default all)."),
@@ -37,6 +37,21 @@ export function registerPositioningTools(server: McpServer): void {
       },
     },
     async (args) => {
+      const isPaper = /^(para|paragon):paper$/i.test(String(args.market).trim());
+      // The terminal's PAPER valuation panel comes from /api/paper, whether or not PAPER is in the positioning snapshot.
+      const paper = isPaper ? await get("/api/paper", {}, { ttlMs: 30_000 }) : undefined;
+      if (isPaper) {
+        try {
+          await resolveMarket(args.market);
+        } catch {
+          return result(
+            envelope("/api/paper", pick({ market: "para:PAPER", inPositioningSnapshot: false, paperValuation: paper }, args.fields), {
+              shownOn: SHOWN_ON,
+              note: "PAPER is not in the positioning snapshot right now, so only the valuation panel is returned. Null fields come with an `errors` entry from Flowscan.",
+            }),
+          );
+        }
+      }
       const { market, note } = await resolveMarket(args.market);
       const route = `/api/perp-snapshot/markets/${encodeURIComponent(market)}`;
       const d = (await get(route, {}, { ttlMs: 60_000 })) as Rec;
@@ -66,14 +81,8 @@ export function registerPositioningTools(server: McpServer): void {
         };
         out.liquidationClusters = [...all].sort((a, b) => num(b.totalNotional) - num(a.totalNotional)).slice(0, args.clustersLimit ?? 40);
       }
-      if (/^(para|paragon):paper$/i.test(market)) {
-        try {
-          out.paperValuation = await get("/api/paper", {}, { ttlMs: 30_000 });
-        } catch (err) {
-          out.paperValuation = { error: (err as Error).message };
-        }
-      }
-      return result(envelope(route, pick(out, args.fields), { shownOn: SHOWN_ON, units: "USD notional; sizes in coins; prices in USD" }));
+      if (isPaper) out.paperValuation = paper;
+      return result(envelope(route, pick(out, args.fields), { shownOn: SHOWN_ON, units: "USD notional; sizes in coins; prices in USD", ...(isPaper ? { paperSource: "https://www.flowscan.xyz/api/paper" } : {}) }));
     },
   );
 
@@ -83,7 +92,7 @@ export function registerPositioningTools(server: McpServer): void {
     {
       title: "Who opened, closed, grew or cut positions in a market (/terminal Changes)",
       description:
-        "/terminal 'Changes' tab: who opened, closed, increased, reduced or flipped positions in ONE market since a baseline (window prev = previous snapshot, minutes ago; or ~1h/4h/24h/7d). Rows: address (named), kind, side, size/prevSize (coins), notionalDelta (USD, + = more long), notional and entry now/before, leverage, account value, all-time PnL. `summary` counts each kind plus long/short notional change and buy/sell notional for the cohort and window (ignores kind/side/address). Paged (total, totalPages).",
+        "/terminal 'Changes' tab: who opened, closed, increased, reduced or flipped positions in ONE market since a baseline (window prev = previous snapshot, minutes ago; or ~1h/4h/24h/7d). Rows: address (named), kind, side, size/prevSize (coins), notionalDelta (USD, + = more long), notional and entry now/before, leverage, account value, all-time PnL. `summary` counts each kind plus long/short notional change and buy/sell notional for the cohort, window, side and address filter (it ignores only `kind`). Paged (total, totalPages).",
       inputSchema: {
         market: z.string().min(1).describe("Market, e.g. 'BTC', 'xyz:TSLA' (case-insensitive; bare 'TSLA' resolves when unique)."),
         window: z.enum(["prev", "1h", "4h", "24h", "7d"]).optional().describe("Baseline (default prev)."),
@@ -106,7 +115,8 @@ export function registerPositioningTools(server: McpServer): void {
       const params = {
         page: args.page ?? 1,
         limit: args.limit ?? 50,
-        ...(sortBy !== "absChange" ? { sort: sortBy, dir: args.dir ?? "desc" } : {}),
+        sort: sortBy,
+        dir: args.dir ?? "desc",
         side: args.side,
         kind: args.kind,
         window: args.window && args.window !== "prev" ? args.window : undefined,
@@ -126,6 +136,7 @@ export function registerPositioningTools(server: McpServer): void {
         cohort: TRADER_FILTER_LABELS[cohort],
         filter: Object.fromEntries(Object.entries({ kind: args.kind, side: args.side, address: args.address }).filter(([, v]) => v !== undefined)),
         summary: d.summary,
+        summaryScope: `cohort '${cohort}', window '${d.window ?? args.window ?? "prev"}'${args.side ? `, side ${args.side}` : ""}${args.address ? `, address '${args.address}'` : ""}; all kinds`,
         total: d.total,
         page: d.page,
         totalPages: d.totalPages,

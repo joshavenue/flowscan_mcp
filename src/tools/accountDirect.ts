@@ -201,7 +201,11 @@ export function registerAccountDirectTools(server: McpServer): void {
           }),
         ),
       };
-      if (args.direction) rows = rows.filter((r) => r.direction === args.direction);
+      if (args.direction) {
+        rows = rows.filter((r) => r.direction === args.direction);
+        totals.scope = "all operations of the address (before the direction filter)";
+        totals.matched = { direction: args.direction, operations: rows.length, totalUsd: Math.round(rows.reduce((s, r) => s + Math.abs(Number(r.usdValue ?? 0)), 0) * 100) / 100 };
+      }
       const { items, paging } = page(rows, args, 50);
       const { rows: picked, report } = pickRows(items, args.fields);
       return result(

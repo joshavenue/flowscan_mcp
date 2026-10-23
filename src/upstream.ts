@@ -61,11 +61,12 @@ export class UpstreamError extends Error {
   ) {
     super(message);
     this.name = "UpstreamError";
-    let host = "?";
+    // Local input checks (e.g. coin resolution, route "coin") have no upstream URL.
+    let host = "input validation";
     try {
       host = new URL(route.split(" ")[0]).host;
     } catch {
-      /* keep ? */
+      /* not a URL: the error came from checking the arguments */
     }
     this.source = host;
   }

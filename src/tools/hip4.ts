@@ -97,8 +97,9 @@ export function registerHip4Tools(server: McpServer): void {
       },
     },
     async (args) => {
-      const data = (await get("/api/hip-4", { limit: args.settledLimit ?? 100 }, { ttlMs: 60_000 })) as Rec;
       const section = args.section ?? "active";
+      if (args.marketKind && section === "questions") throw new Error("marketKind filters outcomes, not question groups. Use section 'active' or 'settled' (or 'all') with marketKind.");
+      const data = (await get("/api/hip-4", { limit: args.settledLimit ?? 100 }, { ttlMs: 60_000 })) as Rec;
       const sortKey = args.sortBy ?? "volume24h";
       const sorter = SORTERS[sortKey];
       const dir = args.order === "asc" ? -1 : 1;
@@ -137,7 +138,7 @@ export function registerHip4Tools(server: McpServer): void {
       description:
         "HIP-4 page outcome drill-down: candles for the YES and NO assets of one outcome over the last N days (compact rows [openTime ms, open, high, low, close, volume, trades]), plus per-side trade stats and, for settled outcomes (settled=true), the settled outcome record. Settled outcomes typically have no candles. Only outcomeId is required (asset ids default to '#<outcomeId>0' YES / '#<outcomeId>1' NO). Get outcomeId from flowscan_hip4_markets.",
       inputSchema: {
-        outcomeId: z.number().int().describe("Outcome id from flowscan_hip4_markets."),
+        outcomeId: z.number().int().min(0).describe("Outcome id from flowscan_hip4_markets."),
         yesAssetId: z.string().optional().describe("Default '#<outcomeId>0' (e.g. '#14730'); a missing '#' is added."),
         noAssetId: z.string().optional().describe("Default '#<outcomeId>1' (e.g. '#14731'); a missing '#' is added."),
         interval: z.enum(["1m", "5m", "15m", "1h", "4h", "1d"]).optional().describe("Candle interval (default '1h', as the site uses)."),
@@ -150,7 +151,9 @@ export function registerHip4Tools(server: McpServer): void {
       const route = `/api/hip-4/${encodeURIComponent(String(args.outcomeId))}`;
       const asset = (v: string | undefined, side: 0 | 1) => {
         const x = String(v ?? `${args.outcomeId}${side}`).trim();
-        return x.startsWith("#") ? x : `#${x}`;
+        const id = x.startsWith("#") ? x : `#${x}`;
+        if (!/^#\d+[01]$/.test(id)) throw new Error(`Asset id '${v}' is not a HIP-4 outcome side: expected '#<outcomeId>0' (YES) or '#<outcomeId>1' (NO).`);
+        return id;
       };
       const data = (await get(route, { yesCoin: asset(args.yesAssetId, 0), noCoin: asset(args.noAssetId, 1), interval: args.interval ?? "1h", days: args.days ?? 7, mode: args.settled ? "settled" : undefined })) as Rec;
       const compact = (c: unknown) => (Array.isArray(c) ? (c as Rec[]).map((k) => [k.t, k.o, k.h, k.l, k.c, k.v, k.n]) : c);
@@ -172,11 +175,19 @@ export function registerHip4Tools(server: McpServer): void {
     {
       title: "HIP-4 asset id -> human label",
       description: "Resolve HIP-4 outcome asset ids like '#14730' (YES) / '#14731' (NO) to readable labels such as 'Arsenal · Yes', as the address page does for HIP-4 spot balances. Returns {labels: {assetId: label}}.",
-      inputSchema: { assets: z.array(z.string()).min(1).max(100).describe("Asset ids, e.g. ['#14730','#14731'] or numeric strings.") },
+      inputSchema: { assets: z.array(z.string().regex(/^\s*#?\d+\s*$/, "Expected a HIP-4 asset id like '#14730'")).min(1).max(100).describe("Asset ids, e.g. ['#14730','#14731'] or numeric strings.") },
     },
     async (args) => {
-      const data = await get("/api/hip-4/labels", { assets: args.assets.join(",") });
-      return result(envelope("/api/hip-4/labels", data));
+      const ids = [...new Set((args.assets as string[]).map((a) => `#${a.trim().replace(/^#/, "")}`))];
+      const bad = ids.filter((a) => !/^#\d+[01]$/.test(a));
+      if (bad.length === ids.length) throw new Error(`Not HIP-4 outcome sides: ${bad.join(", ")}. Asset ids end in 0 (YES) or 1 (NO), e.g. '#14730'.`);
+      const ok = ids.filter((a) => !bad.includes(a));
+      const data = (await get("/api/hip-4/labels", { assets: ok.join(",") })) as Rec;
+      // Only report the ids that were asked for; the route may answer with neighbours.
+      const got = (data?.labels as Rec) ?? {};
+      const labels = Object.fromEntries(ok.filter((a) => a in got).map((a) => [a, got[a]]));
+      const missing = ok.filter((a) => !(a in got));
+      return result(envelope("/api/hip-4/labels", { labels, ...(missing.length ? { notFound: missing } : {}), ...(bad.length ? { invalid: bad, invalidNote: "HIP-4 asset ids end in 0 (YES) or 1 (NO)." } : {}) }));
     },
   );
 }

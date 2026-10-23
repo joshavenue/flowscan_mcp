@@ -122,7 +122,10 @@ function mcpConfigFor(id: string): { cfgPath: string; fetchLog: string } {
   fs.writeFileSync(fetchLog, "");
   const cfg = structuredClone(baseMcp);
   const s = cfg.mcpServers.flowscan;
-  s.args = ["--import", path.join(EVAL_DIR, "fetch-log.mjs"), ...s.args];
+  // mcp.json names the server as dist/index.js relative to the repo root, so the eval runs from any checkout.
+  const args = (s.args as string[]).map((a) => (a.endsWith(".js") && !path.isAbsolute(a) ? path.join(ROOT, a) : a));
+  if (!args.some((a) => a.endsWith(".js") && fs.existsSync(a))) throw new Error(`MCP server script not found: ${args.join(" ")}. Run npm run build first.`);
+  s.args = ["--import", path.join(EVAL_DIR, "fetch-log.mjs"), ...args];
   s.env = { ...(s.env ?? {}), FLOWSCAN_EVAL_FETCH_LOG: fetchLog };
   const cfgPath = path.join(outDir, "mcp", `${id}.json`);
   fs.writeFileSync(cfgPath, JSON.stringify(cfg));
@@ -297,6 +300,11 @@ async function main() {
       done++;
       cost += rec.totalCostUsd ?? 0;
       const tools = rec.toolCalls.map((c) => c.name.replace("mcp__flowscan__flowscan_", "") + (c.isError ? "!" : "")).join(",");
+      if (rec.mcpStatus !== "connected" && done <= 3) {
+        // A server that does not connect would turn the whole run into tool-less answers; stop early.
+        console.error(`[${p.id}] flowscan MCP server status: ${rec.mcpStatus}; aborting the run. Check mcp.json and npm run build.`);
+        process.exit(1);
+      }
       console.log(`[${done}/${prompts.length}] ${p.id} ${rec.subtype ?? "CRASH"} turns=${rec.numTurns} $${(rec.totalCostUsd ?? 0).toFixed(3)} ${(rec.wallMs / 1000).toFixed(0)}s tools=[${tools}] hosts=${Object.keys(rec.fetches.hosts).join("|")} total=$${cost.toFixed(2)}`);
     }
   }

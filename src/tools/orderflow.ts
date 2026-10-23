@@ -147,7 +147,7 @@ export function registerOrderflowTools(server: McpServer): void {
         kind: z.enum(["footprint", "flow"]).optional().describe("Default footprint."),
         interval: z.enum(FOOTPRINT_INTERVALS).optional().describe("Candle size (default 1h)."),
         bars: z.number().int().min(1).max(500).optional().describe("Candles (default 24)."),
-        endTime: z.number().int().min(1_600_000_000_000).optional().describe("Unix ms of the last candle (default now)."),
+        endTime: z.number().int().min(1_600_000_000_000).optional().describe("Unix ms inside the last candle wanted (default now)."),
         includeLevels: z.boolean().optional().describe("footprint: per-price levels (large)."),
         fields: shapeInput.fields,
       },
@@ -160,10 +160,13 @@ export function registerOrderflowTools(server: McpServer): void {
       const bars = args.bars ?? 24;
       const end = args.endTime ?? Date.now();
       if (end > Date.now() + HOUR) throw new Error("endTime is in the future.");
-      const endAligned = Math.floor(end / MIN) * MIN;
-      const start = Math.floor((endAligned - bars * step) / step) * step + step;
+      // The route's range is end-exclusive. The last candle is the one containing endTime
+      // (the current, still-forming one by default); ask for exactly `bars` candles up to it.
+      const lastOpen = Math.floor(end / step) * step;
+      const start = lastOpen - (bars - 1) * step;
+      const routeEnd = Math.min(lastOpen + step, Math.ceil(Date.now() / MIN) * MIN);
       const route = `/api/perp-snapshot/footprint/${encodeURIComponent(coin)}${kind === "flow" ? "/flow" : ""}`;
-      const d = (await get(route, { interval, start, end: endAligned })) as Rec;
+      const d = (await get(route, { interval, start, end: Math.max(routeEnd, start + MIN) })) as Rec;
       const candles = ((d.candles as Rec[]) ?? []).slice(-bars);
       let rows: Rec[];
       let totals: Rec;
@@ -272,7 +275,8 @@ export function registerOrderflowTools(server: McpServer): void {
         };
       }
       if (sp) out.spikeAlerts = { count: Array.isArray(sp.alerts) ? sp.alerts.length : 0, alerts: ((sp.alerts as Rec[]) ?? []).map((a) => ({ ...a, atIso: isoOf(a.at), candles: undefined })) };
-      return result(envelope("/api/perp-snapshot/status", out, { shownOn: SHOWN_ON }));
+      const routes = [...(st ? ["/api/perp-snapshot/status"] : []), ...(lb ? ["/api/perp-snapshot/leaderboard/status"] : []), ...(sp ? ["/api/perp-snapshot/spikes"] : [])];
+      return result(envelope(routes[0], out, { shownOn: SHOWN_ON, ...(routes.length > 1 ? { sources: routes.map((r) => `https://www.flowscan.xyz${r}`) } : {}) }));
     },
   );
 }

@@ -14,7 +14,7 @@ Environment:
   FLOWSCAN_MCP_STATEFUL=1             same as --stateful
   FLOWSCAN_MCP_CORS=<origins>         comma-separated browser origins allowed (or *); default none
   FLOWSCAN_MCP_ALLOWED_HOSTS=<names>  extra Host header names accepted (e.g. your proxy's hostname)
-  FLOWSCAN_HYPERLIQUID_DIRECT=1       hyperliquid-direct mode (59 tools instead of 45)
+  FLOWSCAN_HYPERLIQUID_DIRECT=1       hyperliquid-direct mode (68 tools instead of 54)
   FLOWSCAN_TOOLS=<names>              only register these tools (comma-separated, * wildcards)
 `;
 

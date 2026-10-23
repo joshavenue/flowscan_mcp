@@ -29,7 +29,7 @@ If tools like `flowscan_block` or `flowscan_prices` are in your tool list, you a
 
 ## Picking a tool
 
-1. Unsure which tool fits? Call `flowscan_coverage` with `topic` (for example `revenue`, `address`, `hip-3`, `builders`, `tx hash`). If `servedByThisServer` is false, read `notServedMatches` and tell the user.
+1. Unsure which tool fits? Call `flowscan_coverage` with `topic` (for example `revenue`, `address`, `hip-3`, `builders`, `tx hash`). If `servedByThisServer` is false, read `notServedMatches` and tell the user. If it is `\"partly\"`, check whether the exact thing asked for is in `notServedMatches`.
 2. Tokenized stocks on spot ARE served: `flowscan_spot_stocks` (xStocks tickers end in X, such as NVDAX, TSLAX, MUX; Dinari tickers end in D). Never say spot or token volume is unavailable.
 3. Prefer the narrowest tool (`flowscan_hip3_dex` for one DEX, not `flowscan_hip3_overview` plus filtering).
 4. Look up ids instead of guessing: builders via `flowscan_builder_lookup`; Builder Intelligence ids via `flowscan_builder_intelligence_list`; HIP-4 `outcomeId` via `flowscan_hip4_markets`; a weekend `week` via `flowscan_weekend_weeks` (or any YYYY-MM-DD in that weekend).
@@ -109,4 +109,4 @@ Say what is not served and where the user can see it on www.flowscan.xyz. Do not
 
 ## Errors
 
-Failed calls return `{error, status, route, source}`. `status` and `route` are null when the server rejected the input (bad date range, unknown DEX, unknown validator): fix the arguments. A 404 or changed shape on a valid request usually means Flowscan changed that undocumented route; tell the user which route failed instead of retrying the same call.
+Failed calls return JSON `{error, status, route, source}` (bad arguments too). `source: "input validation"`, with `status` and `route` null, means the server rejected the input before any request (bad date range, unknown DEX, unknown validator): fix the arguments. A 404 or changed shape on a valid request usually means Flowscan changed that undocumented route; tell the user which route failed instead of retrying the same call.
