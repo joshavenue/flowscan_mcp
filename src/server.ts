@@ -32,8 +32,8 @@ const GUIDE_LINE = `For tool-selection rules call the prompt ${GUIDE_PROMPT} or 
 export function serverInstructions(direct: boolean): string {
   const body = direct
     ? `Read-only tools for what www.flowscan.xyz (Hyperliquid explorer) shows: revenue, staking, peers, HIP-3/HIP-4 markets, tokenized stocks, weekend trading, builders, address data, plus (hyperliquid-direct mode) blocks, txs, live feed, prices, candles, order books, trades, validator APR, borrow/lend APYs. MAINNET only. Hosts: flowscan.xyz plus exactly ${UPSTREAM_HOSTS.join(", ")}.`
-    : "Read-only tools for what www.flowscan.xyz (Hyperliquid explorer) shows: revenue, staking, peers, HIP-3 perp DEXs, HIP-4 outcome markets, tokenized stocks, weekend trading, funding/slippage history, builders and per-address account data. MAINNET only; data comes exclusively from flowscan.xyz routes (no block/tx lookups or live prices in this mode).";
-  return `${body} Call flowscan_coverage first if unsure which tool fits.\n${GUIDE_LINE}`;
+    : "Read-only tools for what www.flowscan.xyz (Hyperliquid explorer) shows: revenue, staking, peers, HIP-3 DEXs, HIP-4 markets, tokenized stocks, weekend trading, the /terminal (positioning, liquidations, order flow, funding/OI history), builders, address data and labels. MAINNET only; data comes exclusively from flowscan.xyz routes (no block/tx lookups or live prices in this mode).";
+  return `${body} Unsure? flowscan_search (identifiers) or flowscan_coverage (topics).\n${GUIDE_LINE}`;
 }
 
 /**
