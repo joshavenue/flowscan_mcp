@@ -10,7 +10,12 @@ type Rec = Record<string, unknown>;
 const ROUTE = "/terminal/api/market-history";
 const SHOWN_ON = "https://www.flowscan.xyz/terminal";
 const HOUR_MS = 3_600_000;
-const RANGE_MS = { "1d": 24 * HOUR_MS, "7d": 7 * 24 * HOUR_MS, "14d": 14 * 24 * HOUR_MS } as const;
+const RANGE_MS = { "1d": 24 * HOUR_MS, "7d": 7 * 24 * HOUR_MS, "14d": 14 * 24 * HOUR_MS, "30d": 30 * 24 * HOUR_MS, "90d": 90 * 24 * HOUR_MS, "1y": 365 * 24 * HOUR_MS } as const;
+/** fundingHistory and slippageHistory return at most 500 / 2000 rows counted from startTime, so they stop at 14d. */
+const SHORT_RANGES = new Set(["1d", "7d", "14d"]);
+const OI_INTERVAL_MS = { "5m": 5 * 60_000, "15m": 15 * 60_000, "30m": 30 * 60_000, "1h": HOUR_MS, "2h": 2 * HOUR_MS, "4h": 4 * HOUR_MS, "8h": 8 * HOUR_MS, "12h": 12 * HOUR_MS, "1d": 24 * HOUR_MS } as const;
+const OI_DEFAULT_INTERVAL: Record<string, keyof typeof OI_INTERVAL_MS> = { "1d": "15m", "7d": "1h", "14d": "1h", "30d": "4h", "90d": "12h", "1y": "1d" };
+const OI_MAX_ROWS = 3000;
 const AMOUNT_USD = { "10k": 10_000, "100k": 100_000, "1m": 1_000_000 } as const;
 
 const num = (v: unknown): number | null => {
@@ -87,32 +92,66 @@ function slippageSummary(rows: Rec[], amountUsd: number): Rec {
   };
 }
 
+function oiSummary(rows: Rec[]): Rec {
+  const usd = rows.map((r) => r.oiUsd as number);
+  const latest = rows[0];
+  const first = rows.at(-1)!;
+  const minI = usd.indexOf(Math.min(...usd));
+  const maxI = usd.indexOf(Math.max(...usd));
+  const change = (latest.oiUsd as number) - (first.oiUsd as number);
+  return {
+    count: rows.length,
+    from: first.timeIso,
+    to: latest.timeIso,
+    latest: { timeIso: latest.timeIso, oiUsd: latest.oiUsd, oiCoins: latest.oiClose },
+    first: { timeIso: first.timeIso, oiUsd: first.oiUsd, oiCoins: first.oiClose },
+    changeUsd: round(change, 2),
+    changePct: (first.oiUsd as number) ? round((change / (first.oiUsd as number)) * 100, 2) : null,
+    minUsd: usd[minI],
+    minTimeIso: rows[minI].timeIso,
+    maxUsd: usd[maxI],
+    maxTimeIso: rows[maxI].timeIso,
+  };
+}
+
 export function registerTerminalTools(server: McpServer): void {
   defineTool(
     server,
     "flowscan_market_history",
     {
-      title: "Funding-rate or slippage history for a perp market (/terminal)",
+      title: "Funding, slippage or open-interest history for a perp market (/terminal)",
       description:
-        "Trading terminal history for one perp market (incl. HIP-3): kind=funding -> hourly funding rates; kind=slippage -> order-book slippage and half-spread (bps vs mid) for a market buy/sell of amount, every ~15 min. Rows newest first with timeIso; `summary` covers the whole range (count, from/to, latest, mean/median/max; funding also annualized and share of hours positive).",
+        "/terminal history for one perp market (incl. HIP-3): kind=funding (hourly rates), slippage (bps vs mid for a market buy/sell of `amount`, ~15 min) or openInterest (per candle, coins and USD). Rows newest first with timeIso; `summary` covers the whole range (latest, mean/median/max; funding annualized; OI change, min/max). funding/slippage up to 14d, openInterest up to 1y.",
       inputSchema: {
-        kind: z.enum(["funding", "slippage"]).describe("funding = hourly funding rate history; slippage = order-book slippage/spread history."),
+        kind: z.enum(["funding", "slippage", "openInterest"]).describe("funding = hourly funding rate history; slippage = order-book slippage/spread history; openInterest = open interest history."),
         coin: z.string().min(1).describe("Market, e.g. 'BTC', 'xyz:TSLA' (case-insensitive; bare 'TSLA' resolves when unique)."),
-        range: z.enum(["1d", "7d", "14d"]).optional().describe("Lookback from now (default 1d)."),
+        range: z.enum(["1d", "7d", "14d", "30d", "90d", "1y"]).optional().describe("Lookback from now (default 1d). 30d/90d/1y only for openInterest."),
         amount: z.enum(["10k", "100k", "1m"]).optional().describe("Slippage only: order size in USD (default 100k)."),
+        interval: z.enum(["5m", "15m", "30m", "1h", "2h", "4h", "8h", "12h", "1d"]).optional().describe("openInterest only (default by range)."),
         ...shapeInput,
       },
     },
     async (args) => {
-      const kind = args.kind as "funding" | "slippage";
+      const kind = args.kind as "funding" | "slippage" | "openInterest";
       const range = (args.range ?? "1d") as keyof typeof RANGE_MS;
+      if (kind !== "openInterest" && !SHORT_RANGES.has(range)) throw new Error(`range '${range}' is only available for kind='openInterest'; ${kind} history goes back 14d (use 1d, 7d or 14d).`);
+      if (kind !== "openInterest" && args.interval) throw new Error("interval applies only to kind='openInterest'.");
+      const interval = (args.interval ?? OI_DEFAULT_INTERVAL[range]) as keyof typeof OI_INTERVAL_MS;
+      if (kind === "openInterest" && RANGE_MS[range] / OI_INTERVAL_MS[interval] > OI_MAX_ROWS) {
+        throw new Error(`range ${range} at interval ${interval} is over ${OI_MAX_ROWS} candles; use a larger interval (default for ${range}: ${OI_DEFAULT_INTERVAL[range]}).`);
+      }
       const amountKey = (args.amount ?? "100k") as keyof typeof AMOUNT_USD;
       const amountUsd = AMOUNT_USD[amountKey];
       const { coin, known, note: resolvedNote, suggestions } = await resolveCoin(String(args.coin));
       // Minute-aligned so repeated questions within the cache TTL share one request.
-      const startTime = Math.floor((Date.now() - RANGE_MS[range]) / 60_000) * 60_000;
+      const now = Math.floor(Date.now() / 60_000) * 60_000;
+      const startTime = now - RANGE_MS[range];
       const body: Rec =
-        kind === "funding" ? { type: "fundingHistory", coin, startTime } : { type: "slippageHistory", coin, amount: amountUsd, startTime };
+        kind === "funding"
+          ? { type: "fundingHistory", coin, startTime }
+          : kind === "slippage"
+            ? { type: "slippageHistory", coin, amount: amountUsd, startTime }
+            : { type: "openInterestHistory", coin, interval, startTime, endTime: now };
       const raw = await post(ROUTE, body);
       if (!Array.isArray(raw)) throw new FlowscanError(`Unexpected response from ${ROUTE}`, null, ROUTE, raw);
       const recs = raw as Rec[];
@@ -128,16 +167,20 @@ export function registerTerminalTools(server: McpServer): void {
       const rows: Rec[] =
         kind === "funding"
           ? recs.map((r) => ({ time: r.time, timeIso: isoOf(r.time), fundingRate: num(r.fundingRate) }))
-          : recs.map((r) => ({ time: r.timestamp, timeIso: isoOf(r.timestamp), buySlippageBps: num(r.buySlippageBps), sellSlippageBps: num(r.sellSlippageBps), halfSpreadBps: num(r.halfSpreadBps) }));
+          : kind === "slippage"
+            ? recs.map((r) => ({ time: r.timestamp, timeIso: isoOf(r.timestamp), buySlippageBps: num(r.buySlippageBps), sellSlippageBps: num(r.sellSlippageBps), halfSpreadBps: num(r.halfSpreadBps) }))
+            : recs.map((r) => ({ time: r.t, timeIso: isoOf(r.t), oiOpen: num(r.oiOpen), oiHigh: num(r.oiHigh), oiLow: num(r.oiLow), oiClose: num(r.oiClose), oiUsd: num(r.oiUsd) }));
       rows.sort((a, b) => Number(b.time) - Number(a.time));
-      const valid = kind === "funding" ? rows.filter((r) => typeof r.fundingRate === "number") : rows;
-      const summary = valid.length === 0 ? null : kind === "funding" ? fundingSummary(valid) : slippageSummary(valid, amountUsd);
+      const valid = kind === "funding" ? rows.filter((r) => typeof r.fundingRate === "number") : kind === "openInterest" ? rows.filter((r) => typeof r.oiUsd === "number") : rows;
+      const summary = valid.length === 0 ? null : kind === "funding" ? fundingSummary(valid) : kind === "slippage" ? slippageSummary(valid, amountUsd) : oiSummary(valid);
       const { items, paging } = page(rows, args, 100);
 
       const note =
         kind === "funding"
           ? "fundingRate is the hourly rate as a fraction (0.0000125 = 0.00125%/h); positive = longs pay shorts. annualized = mean hourly rate x 24 x 365 (simple, not compounded). summary covers every row in the range, not only this page."
-          : "Slippage and half-spread in basis points, measured from the mid price for a market buy/sell of amountUsd (so slippage >= halfSpreadBps). summary covers every row in the range, not only this page.";
+          : kind === "slippage"
+            ? "Slippage and half-spread in basis points, measured from the mid price for a market buy/sell of amountUsd (so slippage >= halfSpreadBps). summary covers every row in the range, not only this page."
+            : "Open interest per candle: oiOpen/oiHigh/oiLow/oiClose in coins and oiUsd = oiClose valued at the candle's price. This is Hyperliquid's OI figure, on the same two-sided basis (long + short) as openInterest in flowscan_perp_markets; one-sided OI is half. summary covers every row in the range.";
       return result(
         envelopeRows(ROUTE, items, args.fields, {
           shownOn: SHOWN_ON,
@@ -145,6 +188,7 @@ export function registerTerminalTools(server: McpServer): void {
           kind,
           coin,
           ...(kind === "slippage" ? { dex: recs[0]?.dex ?? null, amountUsd } : {}),
+          ...(kind === "openInterest" ? { interval } : {}),
           range,
           startTimeIso: isoOf(startTime),
           ...(resolvedNote ? { resolvedNote } : {}),

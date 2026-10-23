@@ -59,6 +59,9 @@ function slimOutcome(o: Rec): Rec {
   return row;
 }
 
+/** marketType values the /hip-4 page's "Price" filter shows (everything else but canonical is "Events"). */
+const PRICE_TYPES = new Set(["priceBinary", "binaryPrice", "priceTouch", "scalarPrice", "priceBucket"]);
+
 const SORTERS: Record<string, (o: Rec) => number> = {
   volume24h,
   totalVolume: volumeTotal,
@@ -78,11 +81,13 @@ export function registerHip4Tools(server: McpServer): void {
     {
       title: "HIP-4 prediction markets (questions, active & settled outcomes)",
       description:
-        "The /hip-4 page: HIP-4 prediction markets. section='active' (default): slim rows (outcomeId, name, marketType, asset ids, underlying/target/expiry, yesMark/noMark = implied probability, yesChange24h, volume24h, totalVolume, deployer, question) sorted by sortBy (default volume24h desc). 'settled': resolved outcomes with settleFraction and trade stats. 'questions': question groups. 'all': all three. full=true for descriptions. Candles: flowscan_hip4_outcome.",
+        "The /hip-4 page: HIP-4 prediction markets (filter like the page with marketKind price/events/canonical and deployer). section='active' (default): slim rows (outcomeId, name, marketType, asset ids, underlying/target/expiry, yesMark/noMark = implied probability, yesChange24h, volume24h, totalVolume, deployer, question) sorted by sortBy (default volume24h desc). 'settled': resolved outcomes with settleFraction and trade stats. 'questions': question groups. 'all': all three. full=true for descriptions. Candles: flowscan_hip4_outcome.",
       inputSchema: {
         section: z.enum(["active", "settled", "questions", "all"]).optional().describe("Default active."),
         search: z.string().optional().describe("Substring over name, description, category, underlying, type, deployer, question (e.g. 'Premier League')."),
         category: z.string().optional().describe("Category substring (e.g. 'NFL')."),
+        marketKind: z.enum(["price", "events", "canonical"]).optional().describe("The page's top filter: price (crypto price markets: above/touch/auto-settle/scalar/bucket), events (sports, politics, rates, other questions) or canonical (validator-voted)."),
+        deployer: z.string().optional().describe("Deployer name substring (e.g. 'Outcomexyz', 'Skew')."),
         settledLimit: z.number().int().min(1).max(1000).optional().describe("Settled outcomes to fetch (default 100)."),
         sortBy: z.enum(["volume24h", "totalVolume", "yesMark", "change24h"]).optional().describe("Default volume24h."),
         order: z.enum(["asc", "desc"]).optional().describe("Default desc."),
@@ -98,9 +103,15 @@ export function registerHip4Tools(server: McpServer): void {
       const sorter = SORTERS[sortKey];
       const dir = args.order === "asc" ? -1 : 1;
       const key = { active: "activeOutcomes", settled: "settledOutcomes", questions: "questions", all: "" }[section as "active" | "settled" | "questions" | "all"];
+      const kindOk = (r: Rec) => {
+        if (!args.marketKind || r.outcomeId === undefined) return true;
+        const kind = r.marketType === "canonical" ? "canonical" : PRICE_TYPES.has(String(r.marketType)) ? "price" : "events";
+        return kind === args.marketKind;
+      };
       const f = (rows: Rec[]) =>
         rows
           .filter((r) => matches(outcomeText(r), args.search) && (!args.category || [r.category, r.subCategory, (r.question as Rec | null)?.category].some((c) => matches(c ?? "", args.category) && c)))
+          .filter((r) => kindOk(r) && (!args.deployer || matches(r.deployerName ?? (r as Rec).deployer, args.deployer)))
           .sort((a, b) => (a.outcomeId === undefined ? 0 : (sorter(b) - sorter(a) || volumeTotal(b) - volumeTotal(a)) * dir))
           .map((r) => (r.outcomeId === undefined ? r : args.full ? compactOutcome(r, args.includeContexts) : slimOutcome(r)));
       if (section === "all") {

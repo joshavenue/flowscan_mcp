@@ -14,6 +14,9 @@ import { registerRevenueTools } from "./tools/revenue.js";
 import { registerSpotStockTools } from "./tools/spotStocks.js";
 import { registerTerminalTools } from "./tools/terminal.js";
 import { registerWeekendTools } from "./tools/weekend.js";
+import { registerPositioningTools } from "./tools/positioning.js";
+import { registerOrderflowTools } from "./tools/orderflow.js";
+import { registerSearchTools } from "./tools/search.js";
 import { registerDirectTools } from "./tools/direct.js";
 import { hyperliquidDirectEnabled, UPSTREAM_HOSTS } from "./upstream.js";
 
@@ -66,8 +69,11 @@ export function createServer(): McpServer {
   registerMetaTools(server);
   registerNetworkTools(server);
   registerRevenueTools(server);
+  registerSearchTools(server);
   registerPerpTools(server);
+  registerPositioningTools(server);
   registerTerminalTools(server);
+  registerOrderflowTools(server);
   registerAddressTools(server);
   registerSpotStockTools(server);
   registerWeekendTools(server);

@@ -71,13 +71,15 @@ export function registerBuilderTools(server: McpServer): void {
     {
       title: "Builders leaderboard (revenue, volume, users by window)",
       description:
-        "The /builders 'Builder Arena': ~1800 builders ranked by one metric over a FIXED window (1d/7d/30d/90d/all_time): revenue, volume (USD), new_users, total_users or avg_revenue_per_user_all_time (last two all-time only). Compact rows (rank, id, name, category, value, that metric's windows, all-time revenue, users); full=true for all metrics. For arbitrary ranges like 'last 45 days' use flowscan_builder_revenue; flowscan_hip3_builders ranks by HIP-3 volume only.",
+        "The /builders 'Builder Arena': ~1,900 builders ranked by revenue, volume (USD), new_users, total_users or avg_revenue_per_user_all_time over a FIXED window (1d/7d/30d/90d/all_time). Rows: rank, id, name, category, value, previous window, change, changePct (WoW for 7d), sharePct, all-time revenue, users; `totals` sum them. rankBy change/drop ranks movers (Weekly Champions, Market Movers). Any other date range: flowscan_builder_revenue; HIP-3 volume only: flowscan_hip3_builders.",
       inputSchema: {
         metric: z.enum(["revenue", "volume", "new_users", "total_users", "avg_revenue_per_user_all_time"]).optional().describe("Sort metric (default revenue)."),
         window: z.enum(["1d", "7d", "30d", "90d", "all_time"]).optional().describe("Default 7d (all-time-only metrics ignore it)."),
         category: z.string().optional().describe("Category substring (wallet, copytrading, ...)."),
         search: z.string().optional().describe("Filter by builder id/name substring."),
         minUsers: z.number().int().min(0).optional().describe("Min all-time users (default 0); useful for avg_revenue_per_user_all_time."),
+        rankBy: z.enum(["value", "change", "changePct", "drop", "dropPct"]).optional().describe("value (default); change/changePct = biggest gain vs the previous window (Market Movers, WoW); drop/dropPct = biggest fall. 7d/30d/90d only."),
+        minPrev: z.number().min(0).optional().describe("changePct/dropPct: min previous value (default 1k USD revenue, 1M USD volume, 10 users)."),
         full: z.boolean().optional().describe("Return every metric and window per builder (default false)."),
         ...shapeInput,
       },
@@ -87,18 +89,30 @@ export function registerBuilderTools(server: McpServer): void {
       const metric: string = args.metric ?? "revenue";
       const allTimeOnly = metric === "total_users" || metric === "avg_revenue_per_user_all_time";
       const window: string = allTimeOnly ? "all_time" : (args.window ?? "7d");
+      const rankBy: string = args.rankBy ?? "value";
+      const byChange = rankBy !== "value";
+      if (byChange && (allTimeOnly || !["7d", "30d", "90d"].includes(window))) throw new Error(`rankBy='${rankBy}' needs metric revenue, volume or new_users and window 7d, 30d or 90d (the windows with a previous period).`);
       const val = (b: Rec): number => {
         const m = (b.metrics as Rec)?.[metric];
         if (typeof m === "number") return m;
         const mm = m as Rec | undefined;
         return Number(mm?.[window] ?? 0) || 0;
       };
+      const prev = (b: Rec): number => Number(((b.metrics as Rec)?.[metric] as Rec | undefined)?.[`prev_${window}`] ?? 0) || 0;
+      const change = (b: Rec) => val(b) - prev(b);
+      const changePct = (b: Rec): number | null => (prev(b) > 0 ? ((val(b) - prev(b)) / prev(b)) * 100 : null);
       const users = (b: Rec) => Number(((b.metrics as Rec)?.total_users as Rec | undefined)?.all_time ?? 0) || 0;
       const minUsers = args.minUsers ?? 0;
+      const minPrev = args.minPrev ?? (metric === "new_users" ? 10 : metric === "volume" ? 1_000_000 : 1000);
       let rows = ((d.builders as Rec[]) ?? []).filter((b) => matches(b.category, args.category) && (matches(b.id, args.search) || matches(b.name, args.search)) && users(b) >= minUsers);
-      rows = [...rows].sort((a, b) => val(b) - val(a));
+      if (rankBy === "changePct" || rankBy === "dropPct") rows = rows.filter((b) => prev(b) >= minPrev);
+      const score: (b: Rec) => number =
+        rankBy === "change" ? change : rankBy === "drop" ? (b) => -change(b) : rankBy === "changePct" ? (b) => changePct(b) ?? -Infinity : rankBy === "dropPct" ? (b) => -(changePct(b) ?? Infinity) : val;
+      rows = [...rows].sort((a, b) => score(b) - score(a));
+      const total = rows.reduce((a, b) => a + val(b), 0);
       const ranked = rows.map((b, i) => {
-        if (args.full) return { rank: i + 1, ...b };
+        const delta = allTimeOnly || window === "1d" ? {} : { previous: prev(b), change: Math.round(change(b) * 100) / 100, changePct: changePct(b) === null ? null : Math.round((changePct(b) as number) * 10) / 10 };
+        if (args.full) return { rank: i + 1, ...b, ...delta };
         const m = (b.metrics as Rec) ?? {};
         return {
           rank: i + 1,
@@ -106,14 +120,24 @@ export function registerBuilderTools(server: McpServer): void {
           name: b.name,
           category: b.category,
           value: val(b),
-          ...(allTimeOnly ? {} : { [metric]: m[metric] }),
-          revenueAllTime: (m.revenue as Rec | undefined)?.all_time ?? null,
+          ...delta,
+          ...(total > 0 && !allTimeOnly ? { sharePct: Math.round((val(b) / total) * 10000) / 100 } : {}),
+          // the selected window's previous value is already `previous`; keep the other windows without prev_* noise
+          ...(allTimeOnly ? {} : { [metric]: Object.fromEntries(Object.entries((m[metric] as Rec) ?? {}).filter(([k]) => !k.startsWith("prev_"))) }),
+          ...(metric === "revenue" ? {} : { revenueAllTime: (m.revenue as Rec | undefined)?.all_time ?? null }),
           totalUsers: users(b),
         };
       });
       const { items, paging } = page(ranked, args, 25);
-      const sortedBy = metric === "avg_revenue_per_user_all_time" ? metric : `${metric}.${window}`;
-      return result(envelope("/api/buildersv2/landing/metrics-table", pick({ updated_at: d.updated_at, sortedBy, minUsers, builders: items }, args.fields), { paging, units: "USD for revenue/volume" }));
+      const sortedBy = metric === "avg_revenue_per_user_all_time" ? metric : byChange ? `${rankBy} of ${metric}.${window} vs prev_${window}` : `${metric}.${window}`;
+      const totals = allTimeOnly ? undefined : { [`${metric}_${window}`]: Math.round(total * 100) / 100, [`${metric}_prev_${window}`]: window === "1d" || window === "all_time" ? null : Math.round(rows.reduce((a, b) => a + prev(b), 0) * 100) / 100, builders: rows.length };
+      return result(
+        envelope("/api/buildersv2/landing/metrics-table", pick({ updated_at: d.updated_at, sortedBy, minUsers, ...(rankBy.endsWith("Pct") ? { minPrev } : {}), ...(totals ? { totals } : {}), builders: items }, args.fields), {
+          paging,
+          units: "USD for revenue/volume",
+          ...(!allTimeOnly && window !== "1d" && window !== "all_time" ? { note: `previous = the ${window} before the current ${window}; change = value - previous; sharePct = share of the filtered builders' total.` } : {}),
+        }),
+      );
     },
   );
 
@@ -452,11 +476,12 @@ export function registerBuilderTools(server: McpServer): void {
     {
       title: "Builder detail dashboard (stats, daily series, volume by asset)",
       description:
-        "The /builders/{id} dashboard for one builder over a FIXED window (7d/30d/90d/all, ending yesterday UTC): stats (volume, revenue, fills, unique/new traders, volume per trader, share of Hyperliquid and builder volume, revenue run-rate), daily series (last 90 days unless `days`) and volume/revenue by asset. USD. `builder`: 0x address, 'id:<id>' or a name. For arbitrary ranges use flowscan_builder_revenue.",
+        "The /builders/{id} dashboard for one builder over a FIXED window (7d/30d/90d/all, ending yesterday UTC): stats (volume, revenue, fills, unique/new traders, volume per trader, share of Hyperliquid and builder volume, revenue run-rate), daily series (last 90 days unless `days`), volume/revenue by asset (the trade mix and top assets) and the top users by fees paid ('Audience' panel). USD. `builder`: 0x address, 'id:<id>' or a name. For arbitrary ranges use flowscan_builder_revenue.",
       inputSchema: {
         builder: z.string().min(1).describe("0x address (preferred), 'id:<id>' or a name (ambiguous -> candidates)."),
         window: z.enum(["7d", "30d", "90d", "all"]).optional().describe("Default 30d."),
-        section: z.enum(["stats", "daily", "assets", "all"]).optional().describe("Default all."),
+        section: z.enum(["stats", "daily", "assets", "topUsers", "all"]).optional().describe("Default all (stats, daily, assets and topUsers)."),
+        topUsersLimit: z.number().int().min(1).max(100).optional().describe("Max top users by builder fees paid (default 20)."),
         assetsLimit: z.number().int().min(1).max(1000).optional().describe("Max assets in volumeByAsset (default 40, by volume)."),
         days: z.number().int().min(1).max(1000).optional().describe("Keep only the most recent N days of the daily series (default 90)."),
         fields: shapeInput.fields,
@@ -477,12 +502,21 @@ export function registerBuilderTools(server: McpServer): void {
       }
       const q = { builder: address, window: args.window ?? "30d" };
       const section = args.section ?? "all";
-      const [stats, daily, assets] = await Promise.all([
+      const [stats, daily, assets, top] = await Promise.all([
         section === "all" || section === "stats" ? get("/api/dashboard/builder-stats", q) : null,
         section === "all" || section === "daily" ? get("/api/dashboard/builder-daily-series", q) : null,
         section === "all" || section === "assets" ? (get("/api/dashboard/builder-volume-by-asset", q) as Promise<Rec>) : null,
+        section === "all" || section === "topUsers"
+          ? (get("/api/hydromancer/builder-top-users", q) as Promise<Rec>).catch((err: Error) => ({ error: err.message }) as Rec)
+          : null,
       ]);
       const out: Rec = {};
+      if (top) {
+        const usersList = ((top.users as Rec[]) ?? []).slice(0, args.topUsersLimit ?? 20);
+        out.topUsers = top.error
+          ? { error: top.error }
+          : { window: q.window, note: "Addresses that paid this builder the most fees in the window (feesUsd) and their volume (volumeUsd) through it.", users: usersList.map((u) => ({ address: u.address, feesUsd: u.fees, volumeUsd: u.volume })), count: ((top.users as Rec[]) ?? []).length };
+      }
       if (stats) out.stats = stats;
       if (daily) {
         const dd = daily as Rec;

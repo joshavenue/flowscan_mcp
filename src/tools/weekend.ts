@@ -128,8 +128,12 @@ export function registerWeekendTools(server: McpServer): void {
     {
       title: "Weekend trading: one market's history across weekends",
       description:
-        "Weekend page coin drill-down: one HIP-3 TradFi market's Friday-close -> Sunday-close move (pct and dollar) for every tracked weekend, newest first. Only DEX-prefixed TradFi markets have data; a bare symbol like 'TSLA' is resolved to 'xyz:TSLA' (crypto like 'BTC' has no weekend data). Timestamps come with ISO twins.",
-      inputSchema: { coin: z.string().describe("Market symbol, e.g. 'xyz:TSLA' or just 'TSLA'."), fields: shapeInput.fields },
+        "Weekend page coin drill-down: one HIP-3 TradFi market's Friday-close -> Sunday-close move (pct and dollar) for every tracked weekend, newest first. Only DEX-prefixed TradFi markets have data; a bare symbol like 'TSLA' is resolved to 'xyz:TSLA' (crypto like 'BTC' has no weekend data). includeFunding adds each weekend's funding. Timestamps come with ISO twins.",
+      inputSchema: {
+        coin: z.string().describe("Market symbol, e.g. 'xyz:TSLA' or just 'TSLA'."),
+        includeFunding: z.boolean().optional().describe("Add each weekend's funding (hourly rates between Friday and Sunday close: count, mean, sum, annualized), the funding line on the weekend chart (default false)."),
+        fields: shapeInput.fields,
+      },
     },
     async (args) => {
       let coin = String(args.coin).trim();
@@ -149,9 +153,32 @@ export function registerWeekendTools(server: McpServer): void {
         const [p, sym] = coin.split(":");
         coin = `${p.toLowerCase()}:${sym.toUpperCase()}`;
       }
-      const data = (await get("/api/weekend/coin-changes", { coin })) as Rec;
-      const out = { ...data, ...(note ? { note } : {}), changes: Array.isArray(data.changes) ? (data.changes as Rec[]).map((c) => withIso(c)) : data.changes };
-      return result(envelope("/api/weekend/coin-changes", pick(out, args.fields)));
+      const [data, funding] = await Promise.all([
+        get("/api/weekend/coin-changes", { coin }) as Promise<Rec>,
+        args.includeFunding ? (get("/api/weekend/funding", { coin }) as Promise<Rec>) : null,
+      ]);
+      const rates = ((funding?.rates as Rec[]) ?? []).map((r) => ({ time: Number(r.time), rate: Number(r.rate) })).filter((r) => Number.isFinite(r.time) && Number.isFinite(r.rate));
+      const fundingFor = (c: Rec): Rec | undefined => {
+        if (!funding) return undefined;
+        const from = Number(c.fridayCloseTs);
+        const to = Number(c.sundayCloseTs ?? from + 2 * 86_400_000);
+        const xs = rates.filter((r) => r.time >= from && r.time <= to).map((r) => r.rate);
+        if (xs.length === 0) return { hours: 0 };
+        const sum = xs.reduce((a, b) => a + b, 0);
+        const mean = sum / xs.length;
+        return { hours: xs.length, meanHourlyRate: Number(mean.toPrecision(6)), sumRate: Number(sum.toPrecision(6)), annualizedMeanPct: Math.round(mean * 24 * 365 * 100 * 1000) / 1000 };
+      };
+      const changes = Array.isArray(data.changes) ? (data.changes as Rec[]).map((c) => ({ ...(withIso(c) as Rec), ...(funding ? { funding: fundingFor(c) } : {}) })) : data.changes;
+      const out = {
+        ...data,
+        ...(note ? { note } : {}),
+        changes,
+        ...(Array.isArray(changes) && changes.length === 0
+          ? { emptyNote: `No weekend data for '${coin}'. Only DEX-prefixed HIP-3 TradFi markets (e.g. 'xyz:TSLA', 'xyz:GOLD') trade through the weekend gap; crypto perps like 'BTC' have none. List markets with flowscan_weekend_prices.` }
+          : {}),
+        ...(funding ? { fundingNote: "funding = hourly funding rates between Friday close and Sunday close (fractions; positive = longs pay shorts). sumRate is the total paid per unit of notional over the weekend; annualized = mean x 24 x 365." } : {}),
+      };
+      return result(envelope("/api/weekend/coin-changes", pick(out, args.fields), funding ? { fundingSource: "https://www.flowscan.xyz/api/weekend/funding" } : {}));
     },
   );
 }

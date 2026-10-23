@@ -25,19 +25,20 @@ async function listTools(): Promise<{ names: string[]; schemaChars: number; inst
   return { names: tools.map((t) => t.name), schemaChars: tools.reduce((a, t) => a + JSON.stringify(t).length, 0), instructions };
 }
 
-test("strict mode registers exactly the 45 flowscan.xyz tools", async () => {
+test("strict mode registers exactly the 54 flowscan.xyz tools", async () => {
   delete process.env[DIRECT_ENV];
   const { names, schemaChars, instructions } = await listTools();
-  assert.equal(names.length, 45);
+  assert.equal(names.length, 54);
   for (const t of DIRECT_TOOLS) assert.ok(!names.includes(t), t);
-  assert.ok(schemaChars < 60_000, `schema ${schemaChars}`);
+  // ~1.35k chars per tool on average; FLOWSCAN_TOOLS trims the list for clients that need it smaller.
+  assert.ok(schemaChars < 75_000, `schema ${schemaChars}`);
   assert.match(instructions ?? "", /exclusively from flowscan\.xyz/);
 });
 
 test("direct mode adds the 14 Hyperliquid-direct tools", async () => {
   process.env[DIRECT_ENV] = "true";
   const { names, instructions } = await listTools();
-  assert.equal(names.length, 45 + DIRECT_TOOLS.length);
+  assert.equal(names.length, 54 + DIRECT_TOOLS.length);
   for (const t of DIRECT_TOOLS) assert.ok(names.includes(t), t);
   assert.match(instructions ?? "", /api\.hyperunit\.xyz/);
 });
@@ -57,7 +58,8 @@ test("coverage is mode-aware", () => {
   for (const t of DIRECT_TOOLS) assert.ok(advertised.has(t), t);
   assert.ok(direct.pages.some((p) => p.path === "/block/{height}") && direct.pages.some((p) => p.path === "/tx/{hash}"));
   assert.match(direct.rules[0], /api\.hyperliquid\.xyz, rpc\.hyperliquid\.xyz, api-ui\.hyperliquid\.xyz, api\.hyperunit\.xyz/);
-  assert.deepEqual(direct.notServed.map((n) => n.item), ["Testnet"]);
+  assert.deepEqual(direct.notServed.map((n) => n.item).slice(-1), ["Testnet"]);
+  for (const n of direct.notServed) assert.ok(!n.availableWith, `${n.item} is not served in direct mode either`);
 });
 
 test("live feed: parses the homepage's message shapes, de-duplicates, sorts newest first and closes the socket", async () => {

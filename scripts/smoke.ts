@@ -57,7 +57,7 @@ const MAX_CHARS = 40_000;
 const hip4: { outcomeId?: number; yesAssetId?: string; noAssetId?: string } = {};
 /** Mode under test: same switch the server reads. */
 const DIRECT = /^(1|true)$/i.test((process.env.FLOWSCAN_HYPERLIQUID_DIRECT ?? "").trim());
-const STRICT_TOOL_COUNT = 45;
+const STRICT_TOOL_COUNT = 54;
 const DIRECT_TOOL_COUNT = 14;
 const UPSTREAM_HOSTS = ["api.hyperliquid.xyz", "rpc.hyperliquid.xyz", "api-ui.hyperliquid.xyz", "api.hyperunit.xyz"];
 const ALLOWED_HOSTS = new Set(["www.flowscan.xyz", ...(DIRECT ? UPSTREAM_HOSTS : [])]);
@@ -420,6 +420,56 @@ const cases: Case[] = [
     args: { builder: "pvp", startDate: "2026-09-01", endDate: "2026-09-30" },
     check: (d) => assert(d.data.builder.id === "pvp" && d.data.range.days === 30 && d.data.totalRevenueUsd > 0, "pvp revenue"),
   },
+
+  // terminal: positioning, order flow, liquidations, labels, search (added 2026-10)
+  { tool: "flowscan_terminal_status", args: {}, check: (d) => assert(d.data.snapshot.snapshotIso && d.data.footprint.coins.includes("BTC") && d.data.cohorts.curated.length >= 4, "terminal status") },
+  {
+    tool: "flowscan_perp_market_detail",
+    args: { market: "btc", whalesLimit: 5, clustersLimit: 5 },
+    check: (d) => {
+      assert(d.data.market === "BTC" && d.data.summary.openInterest > 0, "summary");
+      assert(d.data.leverageDistribution.length > 3 && d.data.whales.length === 5 && "tag" in d.data.whales[0], "distribution/whales");
+      assert(d.data.liquidationClusters.length <= 5 && d.data.liquidationTotals.clusterCount >= d.data.liquidationClusters.length, "clusters");
+    },
+  },
+  { tool: "flowscan_perp_market_detail", label: "unknown market", args: { market: "NOTAMARKET123" }, expectError: true },
+  {
+    tool: "flowscan_position_changes",
+    args: { market: "ETH", window: "24h", limit: 5 },
+    check: (d) => assert(d.data.window === "24h" && d.data.baselineIso && d.data.changes.length === 5 && typeof d.data.summary.opened === "number", "changes"),
+  },
+  { tool: "flowscan_position_changes", label: "closed only", args: { market: "BTC", kind: "closed", limit: 3 }, check: (d) => assert(d.data.changes.every((c: Json) => c.kind === "closed"), "kind filter") },
+  { tool: "flowscan_twaps", args: { market: "BTC", limit: 5 }, check: (d) => assert(typeof d.data.summary.count === "number" && d.data.twaps.length <= 5, "twaps") },
+  { tool: "flowscan_liquidations", args: { limit: 10 }, check: (d) => assert(d.data.market === "all" && typeof d.data.summary.count === "number", "recent liquidations") },
+  { tool: "flowscan_liquidations", label: "history", args: { view: "history", market: "BTC", hours: 24, limit: 10 }, check: (d) => assert(d.data.bucketMinutes === 1 && typeof d.data.totals.totalNotional === "number", "liquidation history") },
+  { tool: "flowscan_liquidations", label: "history needs market", args: { view: "history" }, expectError: true },
+  {
+    tool: "flowscan_order_flow",
+    args: { market: "ETH", bars: 6 },
+    check: (d) => assert(d.data.rows.length === 6 && d.data.totals.buyUsd > 0 && d.data.rows[0].t > d.data.rows[5].t, "footprint"),
+  },
+  { tool: "flowscan_order_flow", label: "flow", args: { market: "BTC", kind: "flow", interval: "15m", bars: 4 }, check: (d) => assert(d.data.rows.length === 4 && "realizedPnlUsd" in d.data.totals, "flow") },
+  { tool: "flowscan_order_flow", label: "untracked coin", args: { market: "NOTACOIN" }, expectError: true },
+  {
+    tool: "flowscan_market_history",
+    label: "open interest 30d",
+    args: { kind: "openInterest", coin: "BTC", range: "30d", limit: 5 },
+    check: (d) => assert(d.interval === "4h" && d.summary.count > 150 && d.summary.latest.oiUsd > 0, "OI history"),
+  },
+  { tool: "flowscan_market_history", label: "funding 30d rejected", args: { kind: "funding", coin: "BTC", range: "30d" }, expectError: true },
+  { tool: "flowscan_wallet_labels", args: { addresses: [VAULT, BUSY] }, check: (d) => assert(d.data.count === 2 && d.data.wallets[0].name, "labels") },
+  { tool: "flowscan_wallet_labels", label: "search", args: { search: "wintermute", limit: 3 }, check: (d) => assert(d.data.matches.length >= 1, "label search") },
+  { tool: "flowscan_wallet_labels", label: "neither arg", args: {}, expectError: true },
+  { tool: "flowscan_search", args: { query: "tsla" }, check: (d) => assert(d.data.perpMarkets.includes("xyz:TSLA"), "search market") },
+  { tool: "flowscan_search", label: "address", args: { query: VAULT }, check: (d) => assert(d.data.type === "address" && d.data.address.label?.name, "search address") },
+  {
+    tool: "flowscan_address_completed_trades",
+    args: { address: BUSY, limit: 5 },
+    check: (d) => assert(d.summary.count > 0 && d.data.length <= 5 && typeof d.summary.winRatePct === "number", "completed trades"),
+  },
+  { tool: "flowscan_perp_positions", label: "top 10k cohort", args: { market: "BTC", traderFilter: "leaderboard", limit: 5 }, check: (d) => assert(d.data.cohort === "Top 10k accounts" && d.data.total < 5000, "cohort filter") },
+  { tool: "flowscan_builders_leaderboard", label: "movers", args: { rankBy: "change", limit: 5 }, check: (d) => assert(d.data.builders[0].change >= d.data.builders[1].change, "movers sort") },
+  { tool: "flowscan_builder_dashboard", label: "top users", args: { builder: FOMO_SOCIAL, section: "topUsers", topUsersLimit: 5 }, check: (d) => assert(d.data.topUsers.users.length > 0, "top users") },
 ];
 
 // The small "FOMO" builder (id "fomo") is only addressable unambiguously through its address; find it from the lookup.
@@ -678,7 +728,7 @@ async function main(): Promise<void> {
   if (tools.length !== expectedTools) failures.push(`expected ${expectedTools} tools in ${DIRECT ? "direct" : "strict"} mode, got ${tools.length}`);
   const schemaChars = tools.reduce((a, t) => a + JSON.stringify(t).length, 0);
   console.log(`total tool schema: ${schemaChars} chars`);
-  if (!DIRECT && schemaChars >= 60_000) failures.push(`strict-mode tool schema is ${schemaChars} chars (limit 60000)`);
+  if (!DIRECT && schemaChars >= 75_000) failures.push(`strict-mode tool schema is ${schemaChars} chars (limit 75000)`);
   const rows: Array<{ name: string; status: string; ms: number; size: number }> = [];
   const tested = new Set<string>();
   const maxByTool = new Map<string, number>();
